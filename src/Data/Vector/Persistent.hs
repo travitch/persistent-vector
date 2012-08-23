@@ -79,6 +79,7 @@ pvFoldr f = go
       let tseed = V.foldr f seed t
       in V.foldr (flip go) tseed vecs
 
+{-# INLINABLE pvTraverse #-}
 pvTraverse :: (Applicative f) => (a -> f b) -> Vector a -> f (Vector b)
 pvTraverse f = go
   where
