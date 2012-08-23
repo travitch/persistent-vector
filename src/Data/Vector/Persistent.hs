@@ -39,6 +39,21 @@ data Vector a = EmptyVector
 instance Foldable Vector where
   foldr = pvFoldr
 
+instance Functor Vector where
+  fmap = pvFmap
+
+{-# INLINABLE pvFmap #-}
+pvFmap :: (a -> b) -> Vector a -> Vector b
+pvFmap f = go
+  where
+    go EmptyVector = EmptyVector
+    go (DataNode v) = DataNode (fmap f v)
+    go (InternalNode v) = InternalNode (fmap (fmap f) v)
+    go (RootNode sz sh t v) =
+      let t' = fmap f t
+          v' = fmap (fmap f) v
+      in RootNode sz sh t' v'
+
 {-# INLINABLE pvFoldr #-}
 pvFoldr :: (a -> b -> b) -> b -> Vector a -> b
 pvFoldr f = go
