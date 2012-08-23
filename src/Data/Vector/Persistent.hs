@@ -20,6 +20,10 @@ import Prelude hiding ( null, length, tail )
 import Data.Bits
 import Data.Foldable ( Foldable )
 import qualified Data.Foldable as F
+import Data.Monoid ( Monoid )
+import qualified Data.Monoid as M
+-- import Data.Traversable ( Traversable )
+-- import qualified Data.Traversable as T
 import qualified Data.Vector as V
 
 -- Note: using Int here doesn't give the full range of 32 bits on a 32
@@ -41,6 +45,13 @@ instance Foldable Vector where
 
 instance Functor Vector where
   fmap = pvFmap
+
+instance Monoid (Vector a) where
+  mempty = empty
+  mappend = pvAppend
+
+-- instance Traversable Vector where
+--   traverse = pvTraverse
 
 {-# INLINABLE pvFmap #-}
 pvFmap :: (a -> b) -> Vector a -> Vector b
@@ -65,6 +76,17 @@ pvFoldr f = go
     go seed (RootNode _ _ t vecs) =
       let tseed = V.foldr f seed t
       in V.foldr (flip go) tseed vecs
+
+-- pvTraverse :: (Applicative f) => (a -> f b) -> Vector a -> f (Vector b)
+-- pvTraverse _ EmptyVector = A.pure EmptyVector
+-- pvTraverse f (DataNode v) = DataNode <$> T.traverse f v
+-- pvTraverse f (InternalNode vecs) = InternalNode <$> T.traverse f vecs
+
+{-# INLINABLE pvAppend #-}
+pvAppend :: Vector a -> Vector a -> Vector a
+pvAppend EmptyVector v = v
+pvAppend v EmptyVector = v
+pvAppend v1 v2 = F.foldr (flip snoc) v1 (F.toList v2)
 
 empty :: Vector a
 empty = EmptyVector
