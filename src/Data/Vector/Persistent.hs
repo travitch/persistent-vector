@@ -36,15 +36,20 @@ data Vector a = EmptyVector
                          }
               deriving (Eq, Ord, Show)
 
--- instance Foldable (Vector a) where
---   F.foldr = pvFoldr
+instance Foldable Vector where
+  foldr = pvFoldr
 
--- pvFoldr :: (a -> b -> b) -> b -> Vector a -> b
--- pvFoldr _ seed EmptyVector = seed
--- pvFoldr f seed (RootNode _ shift tail internal) =
---   go (intVecPtrs internal) `f` go
---   where
---     go acc v =
+{-# INLINABLE pvFoldr #-}
+pvFoldr :: (a -> b -> b) -> b -> Vector a -> b
+pvFoldr f = go
+  where
+    go seed EmptyVector = seed
+    go seed (DataNode v) = V.foldr f seed v
+    go seed (InternalNode vecs) =
+      V.foldr (flip go) seed vecs
+    go seed (RootNode _ _ t vecs) =
+      let tseed = V.foldr f seed t
+      in V.foldr (flip go) tseed vecs
 
 empty :: Vector a
 empty = EmptyVector
