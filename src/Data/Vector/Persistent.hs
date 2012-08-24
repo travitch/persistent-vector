@@ -1,3 +1,6 @@
+-- | This is a port of the persistent vector from clojure to Haskell.
+--
+-- The implementation is based on array mapped tries.
 module Data.Vector.Persistent (
   Vector,
   empty,
