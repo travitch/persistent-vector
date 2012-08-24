@@ -137,50 +137,45 @@ singleton elt =
 
 snoc :: Vector a -> a -> Vector a
 snoc EmptyVector elt = singleton elt
-snoc v elt
-  -- If there is room in the tail, add the new element there
-  | not (nodeIsFull (vecTail v)) = v { vecTail = V.snoc (vecTail v) elt
-                                  , vecSize = vecSize v + 1
-                                  }
-  -- Otherwise, insert the tail into the tree and add a new tail with
-  -- this element
+snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
+  -- Room in tail
+  | not (nodeIsFull t) = v { vecTail = V.snoc t elt, vecSize = sz + 1 }
+  -- Overflow current root
+  | sz `shiftR` 5 > 1 `shiftL` sh =
+    RootNode { vecSize = sz + 1
+             , vecShift = sh + 5
+             , vecTail = V.singleton elt
+             , intVecPtrs = V.fromList [ InternalNode (intVecPtrs v)
+                                       , newPath sh t
+                                       ]
+             }
+  -- Insert into the tree
   | otherwise =
-    case pushTail (vecShift v - 5) (intVecPtrs v) (vecTail v) of
-      -- In this case, the root really has been modified to add the
-      -- tail into the tree structure
-      (newRoot, Nothing) ->
-        RootNode { vecSize = vecSize v + 1
-                 , vecTail = V.singleton elt
-                 , vecShift = vecShift v
-                 , intVecPtrs = newRoot
-                 }
-      -- Adding a new level; the oldRoot is really the entire old
-      -- subtree unmodified and we start a new subtree next to it
-      (oldRoot, Just expansion) ->
-        RootNode { vecSize = vecSize v + 1
-                 , vecShift = vecShift v + 5
-                 , vecTail = V.singleton elt
-                 , intVecPtrs = V.fromList [ InternalNode oldRoot
-                                           , InternalNode expansion
-                                           ]
-                 }
+      RootNode { vecSize = sz + 1
+               , vecShift = sh
+               , vecTail = V.singleton elt
+               , intVecPtrs = pushTail sz t sh (intVecPtrs v)
+               }
+snoc _ _ = error "Internal nodes should not be exposed to the user"
 
+pushTail :: Int -> V.Vector a -> Int -> V.Vector (Vector a) -> V.Vector (Vector a)
+pushTail cnt t = go
+  where
+    go level parent
+      | level == 5 = V.snoc parent (DataNode t)
+      | subIdx < V.length parent =
+        let nextVec = V.unsafeIndex parent subIdx
+            toInsert = go (level - 5) (intVecPtrs nextVec)
+        in parent V.// [(subIdx, InternalNode toInsert)]
+      | otherwise = V.snoc parent (newPath (level - 5) t)
+      where
+        subIdx = ((cnt - 1) `shiftR` level) .&. 0x1f
 
-pushTail :: Int -> V.Vector (Vector a) -> V.Vector a -> (V.Vector (Vector a), Maybe (V.Vector (Vector a)))
-pushTail level arr tail
-  | level == 0 =
-    case nodeIsFull arr of
-      True -> (arr, Just (V.singleton (DataNode tail)))
-      False -> (V.snoc arr (DataNode tail), Nothing)
-  | otherwise =
-      let nextArr = intVecPtrs (V.last arr)
-      in case pushTail (level - 5) nextArr tail of
-        (newChild, Nothing) ->
-          (arr V.// [(V.length arr - 1, InternalNode newChild)], Nothing)
-        (_, Just newChild) ->
-          case nodeIsFull arr of
-            True -> (arr, Just newChild)
-            False -> (V.snoc arr (InternalNode newChild), Nothing)
+newPath :: Int -> V.Vector a -> Vector a
+newPath level t
+  | level == 0 = DataNode t
+  | otherwise = InternalNode (V.singleton (newPath (level - 5) t))
+
 
 tailOffset :: Vector a -> Int
 tailOffset v
