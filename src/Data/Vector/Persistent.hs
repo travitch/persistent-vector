@@ -93,7 +93,7 @@ pvTraverse f = go
 pvAppend :: Vector a -> Vector a -> Vector a
 pvAppend EmptyVector v = v
 pvAppend v EmptyVector = v
-pvAppend v1 v2 = F.foldr (flip snoc) v1 (F.toList v2)
+pvAppend v1 v2 = F.foldl' snoc v1 (F.toList v2)
 
 empty :: Vector a
 empty = EmptyVector
