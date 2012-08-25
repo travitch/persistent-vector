@@ -10,14 +10,29 @@ import qualified Data.Sequence as S
 import Data.Vector.Persistent ( Vector )
 import qualified Data.Vector.Persistent as V
 
-testListTraversal :: [Int] -> Int
-testListTraversal = F.foldr (+) 0
+testListRTraversal :: [Int] -> Int
+testListRTraversal = F.foldr (+) 0
 
-testVecTraversal :: Vector Int -> Int
-testVecTraversal = F.foldr (+) 0
+testListLSTraversal :: [Int] -> Int
+testListLSTraversal = F.foldl' (+) 0
 
-testSeqTraversal :: Seq Int -> Int
-testSeqTraversal = F.foldr (+) 0
+testVecRTraversal :: Vector Int -> Int
+testVecRTraversal = F.foldr (+) 0
+
+testVecLTraversal :: Vector Int -> Int
+testVecLTraversal = F.foldl (+) 0
+
+testSeqRTraversal :: Seq Int -> Int
+testSeqRTraversal = F.foldr (+) 0
+
+testSeqLTraversal :: Seq Int -> Int
+testSeqLTraversal = F.foldl (+) 0
+
+testVecLSTraversal :: Vector Int -> Int
+testVecLSTraversal = F.foldl' (+) 0
+
+testSeqLSTraversal :: Seq Int -> Int
+testSeqLSTraversal = F.foldl' (+) 0
 
 testListIndex :: [Int] -> Int -> Int
 testListIndex = (!!)
@@ -48,9 +63,14 @@ testVecBuild len = F.foldl' V.snoc V.empty [0..len]
 
 main :: IO ()
 main = defaultMainWith defaultConfig setup [
-  bgroup "traverse1000" [ bench "List1000" $ whnf testListTraversal l1000
-                        , bench "Seq1000" $ whnf testSeqTraversal s1000
-                        , bench "Vec1000" $ whnf testVecTraversal v1000
+  bgroup "traverse1000" [ bench "ListR1000" $ whnf testListRTraversal l1000
+                        , bench "SeqR1000" $ whnf testSeqRTraversal s1000
+                        , bench "VecR1000" $ whnf testVecRTraversal v1000
+                        , bench "SeqL1000" $ whnf testSeqLTraversal s1000
+                        , bench "VecL1000" $ whnf testVecLTraversal v1000
+                        , bench "ListLS1000" $ whnf testListLSTraversal l1000
+                        , bench "SeqLS1000" $ whnf testSeqLSTraversal s1000
+                        , bench "VecLS1000" $ whnf testVecLSTraversal v1000
                         ],
   bgroup "indexAt3_1000" [ bench "List1000" $ whnf (testListIndex l1000) 3
                          , bench "Seq1000" $ whnf (testSeqIndex s1000) 3
