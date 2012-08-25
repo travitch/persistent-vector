@@ -25,6 +25,7 @@ inputList sz = do
 tests :: [Test]
 tests = [ testProperty "toListFromListIdent" prop_toListFromListIdentity
         , testProperty "foldrWorks" prop_foldrWorks
+        , testProperty "foldlWorks" prop_foldlWorks
         , testProperty "mappendWorks" prop_mappendWorks
         ]
 
@@ -38,6 +39,10 @@ prop_toListFromListIdentity (InputList il) =
 prop_foldrWorks :: InputList -> Bool
 prop_foldrWorks (InputList il) =
   F.foldr (+) 0 il == F.foldr (+) 0 (V.fromList il)
+
+prop_foldlWorks :: InputList -> Bool
+prop_foldlWorks (InputList il) =
+  F.foldl' (flip (:)) [] il == F.foldl (flip (:)) [] (V.fromList il)
 
 prop_mappendWorks :: (InputList, InputList) -> Bool
 prop_mappendWorks (InputList il1, InputList il2) =
