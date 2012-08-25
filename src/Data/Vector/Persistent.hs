@@ -38,7 +38,7 @@ import qualified Data.Vector.Persistent.Array as A
 data Vector a = EmptyVector
               | RootNode { vecSize :: !Int
                          , vecShift :: !Int
-                         , vecTail :: !(Array a)
+                         , vecTail :: ![a]
                          , intVecPtrs :: !(Array (Vector a))
                          }
               | InternalNode { intVecPtrs :: !(Array (Vector a))
@@ -71,7 +71,7 @@ pvFmap f = go
     go (DataNode v) = DataNode (A.map f v)
     go (InternalNode v) = InternalNode (A.map (fmap f) v)
     go (RootNode sz sh t v) =
-      let t' = A.map f t
+      let t' = map f t
           v' = A.map (fmap f) v
       in RootNode sz sh t' v'
 
@@ -84,7 +84,7 @@ pvFoldr f = go
     go seed (InternalNode as) = {-# SCC "goInternalNode" #-}
       A.foldr (flip go) seed as
     go seed (RootNode _ _ t as) = {-# SCC "goRootNode" #-}
-      let tseed = A.foldr f seed t
+      let tseed = F.foldl' (flip f) seed t
       in A.foldr (flip go) tseed as
 
 {-# INLINABLE pvTraverse #-}
@@ -95,7 +95,7 @@ pvTraverse f = go
     go (DataNode a) = DataNode <$> A.traverse f a
     go (InternalNode as) = InternalNode <$> A.traverse go as
     go (RootNode sz sh t as) =
-      RootNode sz sh <$> A.traverse f t <*> A.traverse go as
+      RootNode sz sh <$> T.traverse f t <*> A.traverse go as
 
 {-# INLINABLE pvAppend #-}
 pvAppend :: Vector a -> Vector a -> Vector a
@@ -133,7 +133,7 @@ index v ix
 unsafeIndex :: Vector a -> Int -> a
 unsafeIndex vec ix
   | ix >= tailOffset vec =
-    A.index (vecTail vec) (ix .&. 0x1f)
+    vecTail vec !! (ix .&. 0x1f)
   | otherwise = go (fromIntegral (vecShift vec)) vec
   where
     wordIx = fromIntegral ix
@@ -148,7 +148,7 @@ singleton :: a -> Vector a
 singleton elt =
   RootNode { vecSize = 1
            , vecShift = 5
-           , vecTail = A.fromList 1 [elt]
+           , vecTail = [elt]
            , intVecPtrs = A.fromList 0 []
            }
 
@@ -164,12 +164,12 @@ snoc :: Vector a -> a -> Vector a
 snoc EmptyVector elt = singleton elt
 snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
   -- Room in tail
-  | not (nodeIsFull t) = v { vecTail = arraySnoc t elt, vecSize = sz + 1 }
+  | sz .&. 0x1f /= 0 = v { vecTail = elt : t, vecSize = sz + 1 }
   -- Overflow current root
   | sz `shiftR` 5 > 1 `shiftL` sh =
     RootNode { vecSize = sz + 1
              , vecShift = sh + 5
-             , vecTail = A.fromList 1 [elt]
+             , vecTail = [elt]
              , intVecPtrs = A.fromList 2 [ InternalNode (intVecPtrs v)
                                          , newPath sh t
                                          ]
@@ -178,28 +178,27 @@ snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
   | otherwise =
       RootNode { vecSize = sz + 1
                , vecShift = sh
-               , vecTail = A.fromList 1 [elt]
+               , vecTail = [elt]
                , intVecPtrs = pushTail sz t sh (intVecPtrs v)
                }
 snoc _ _ = error "Internal nodes should not be exposed to the user"
 
-pushTail :: Int -> Array a -> Int -> Array (Vector a) -> Array (Vector a)
+pushTail :: Int -> [a] -> Int -> Array (Vector a) -> Array (Vector a)
 pushTail cnt t = go
   where
     go level parent
-      | level == 5 = arraySnoc parent (DataNode t)
+      | level == 5 = arraySnoc parent (DataNode (A.fromList 32 (reverse t)))
       | subIdx < A.length parent =
         let nextVec = A.index parent subIdx
             toInsert = go (level - 5) (intVecPtrs nextVec)
         in A.update parent subIdx (InternalNode toInsert)
---         parent V.// [(subIdx, InternalNode toInsert)]
       | otherwise = arraySnoc parent (newPath (level - 5) t)
       where
         subIdx = ((cnt - 1) `shiftR` level) .&. 0x1f
 
-newPath :: Int -> Array a -> Vector a
+newPath :: Int -> [a] -> Vector a
 newPath level t
-  | level == 0 = DataNode t
+  | level == 0 = DataNode (A.fromList 32 (reverse t))
   | otherwise = InternalNode $ A.fromList 1 $ [newPath (level - 5) t]
 
 
@@ -209,9 +208,6 @@ tailOffset v
   | otherwise = (len - 1) `shiftR` 5 `shiftL` 5
   where
     len = length v
-
-nodeIsFull :: Array a -> Bool
-nodeIsFull = (==32) . A.length
 
 fromList :: [a] -> Vector a
 fromList = F.foldl' snoc empty
