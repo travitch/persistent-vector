@@ -35,3 +35,16 @@ test-suite pvTests
                  QuickCheck > 2.4,
                  test-framework,
                  test-framework-quickcheck2
+
+benchmark pvBench
+  default-language: Haskell2010
+  type: exitcode-stdio-1.0
+  hs-source-dirs: bench
+  main-is: pvBench.hs
+  ghc-options: -Wall -O2
+  ghc-prof-options: -auto-all
+  build-depends: persistent-vector,
+                 base == 4.*,
+                 containers,
+                 criterion,
+                 deepseq
