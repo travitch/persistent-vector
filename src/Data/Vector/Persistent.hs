@@ -49,6 +49,7 @@ data Vector a = EmptyVector
 
 instance Foldable Vector where
   foldr = pvFoldr
+  foldl = pvFoldl
 
 instance Functor Vector where
   fmap = pvFmap
@@ -80,12 +81,24 @@ pvFoldr :: (a -> b -> b) -> b -> Vector a -> b
 pvFoldr f = go
   where
     go seed EmptyVector = seed
-    go seed (DataNode a) = {-# SCC "goDataNode" #-} A.foldr f seed a
-    go seed (InternalNode as) = {-# SCC "goInternalNode" #-}
+    go seed (DataNode a) = {-# SCC "gorDataNode" #-} A.foldr f seed a
+    go seed (InternalNode as) = {-# SCC "gorInternalNode" #-}
       A.foldr (flip go) seed as
-    go seed (RootNode _ _ t as) = {-# SCC "goRootNode" #-}
+    go seed (RootNode _ _ t as) = {-# SCC "gorRootNode" #-}
       let tseed = F.foldl' (flip f) seed t
       in A.foldr (flip go) tseed as
+
+{-# INLINABLE pvFoldl #-}
+pvFoldl :: (b -> a -> b) -> b -> Vector a -> b
+pvFoldl f = go
+  where
+    go seed EmptyVector = seed
+    go seed (DataNode a) = {-# SCC "golDataNode" #-} A.foldl' f seed a
+    go seed (InternalNode as) =
+      A.foldl' go seed as
+    go seed (RootNode _ _ t as) =
+      let rseed = A.foldl' go seed as
+      in F.foldr (flip f) rseed t
 
 {-# INLINABLE pvTraverse #-}
 pvTraverse :: (Applicative f) => (a -> f b) -> Vector a -> f (Vector b)

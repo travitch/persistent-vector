@@ -345,7 +345,7 @@ unsafeUpdate' ary idx b =
 {-# INLINE unsafeUpdate' #-}
 
 foldl' :: (b -> a -> b) -> b -> Array a -> b
-foldl' f = \ z0 ary0 -> go ary0 (length ary0) 0 z0
+foldl' f z0 ary0 = go ary0 (length ary0) 0 z0
   where
     go ary n i !z
         | i >= n    = z
@@ -353,7 +353,8 @@ foldl' f = \ z0 ary0 -> go ary0 (length ary0) 0 z0
 {-# INLINE foldl' #-}
 
 foldr :: (a -> b -> b) -> b -> Array a -> b
-foldr f = \ z0 ary0 -> go ary0 (length ary0) 0 z0
+foldr f z0 ary0 = go ary0 (length ary0) 0 z0
+-- foldr f = \ z0 ary0 -> go ary0 (length ary0) 0 z0
   where
     go ary n i z
         | i >= n    = z
