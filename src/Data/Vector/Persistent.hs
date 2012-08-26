@@ -13,10 +13,15 @@
 -- * This should make it easy to implement things like take and drop &c
 --
 -- * Implement a function to free the extra space taken by a slice
---   (drop references that are inaccessible).
+--   (drop references that are inaccessible). - shrink
 --
 -- * Implement something to make parallel reductions simple (maybe
 --   something like vector-strategies)
+--
+-- * Implement cons.  Cons can use the space that is hidden by the
+--   offset cheaply.  It can also make a variant of pushTail
+--   (pushHead) that allocates fragments of preceeding sub-trees.
+--   Each cons call will modify the offset of its result vector.
 module Data.Vector.Persistent (
   Vector,
   empty,
