@@ -10,6 +10,8 @@ import qualified Data.Sequence as S
 import Data.Vector.Persistent ( Vector )
 import qualified Data.Vector.Persistent as V
 
+-- FIXME: Add some tests for IntMap performance
+
 testListRTraversal :: [Int] -> Int
 testListRTraversal = F.foldr (+) 0
 
