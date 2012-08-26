@@ -4,7 +4,19 @@
 --
 -- TODO:
 --
--- * Implement pop (remove last element)
+-- * Implement slice.  Do this by adding an offset field to the
+--   RootNode and maintain an appropriate length.  Change append to
+--   not always snoc the new element - if there is room, its position
+--   in already allocated vectors may need to be found and updated
+--   instead.  Slice should have zero cost.
+--
+-- * This should make it easy to implement things like take and drop &c
+--
+-- * Implement a function to free the extra space taken by a slice
+--   (drop references that are inaccessible).
+--
+-- * Implement something to make parallel reductions simple (maybe
+--   something like vector-strategies)
 module Data.Vector.Persistent (
   Vector,
   empty,
@@ -14,6 +26,8 @@ module Data.Vector.Persistent (
   index,
   unsafeIndex,
   snoc,
+  update,
+  (//),
   -- * Conversion
   fromList
   ) where
@@ -25,6 +39,7 @@ import Control.DeepSeq
 import Data.Bits
 import Data.Foldable ( Foldable )
 import qualified Data.Foldable as F
+import qualified Data.List as L
 import Data.Monoid ( Monoid )
 import qualified Data.Monoid as M
 import Data.Traversable ( Traversable )
@@ -125,38 +140,46 @@ pvRnf (RootNode _ _ t as) = rnf as `seq` rnf t
 
 -- Functions
 
+-- | The empty vector
 empty :: Vector a
 empty = EmptyVector
 
+-- | Test to see if the vector is empty. (O(1))
 null :: Vector a -> Bool
 null EmptyVector = True
 null _ = False
 
+-- | Get the length of the vector. (O(1))
 length :: Vector a -> Int
 length EmptyVector = 0
 length RootNode { vecSize = s } = s
-length InternalNode {} = error "Internal nodes should not be exposed"
-length DataNode {} = error "Data nodes should not be exposed"
+length InternalNode {} = error "Data.Vector.Persistent.length: Internal nodes should not be exposed"
+length DataNode {} = error "Data.Vector.Persistent.length: Data nodes should not be exposed"
 
+-- | Bounds-checked indexing into a vector. (O(1))
 index :: Vector a -> Int -> Maybe a
 index v ix
   | length v > ix = Just $ unsafeIndex v ix
   | otherwise = Nothing
 
+-- | Unchecked indexing into a vector. (O(1))
+--
+-- Note that out-of-bounds indexing might not even crash - it will
+-- usually just return nonsense values.
 unsafeIndex :: Vector a -> Int -> a
 unsafeIndex vec ix
   | ix >= tailOffset vec =
     vecTail vec !! (ix .&. 0x1f)
-  | otherwise = go (fromIntegral (vecShift vec)) vec
+  | otherwise = go (vecShift vec) vec
   where
-    wordIx = fromIntegral ix
     go level v
-      | level == 0 = A.index (dataVec v) (wordIx .&. 0x1f)
+      | level == 0 = A.index (dataVec v) (ix .&. 0x1f)
       | otherwise =
-        let nextVecIx = (wordIx `shiftR` level) .&. 0x1f
+        let nextVecIx = (ix `shiftR` level) .&. 0x1f
             v' = intVecPtrs v
         in go (level - 5) (A.index v' nextVecIx)
 
+-- | Construct a vector with a single element. (O(1))
 singleton :: a -> Vector a
 singleton elt =
   RootNode { vecSize = 1
@@ -173,6 +196,7 @@ arraySnoc a elt = A.run $ do
   A.write a' alen elt
   return a'
 
+-- | Append an element to the end of the vector. (O(1))
 snoc :: Vector a -> a -> Vector a
 snoc EmptyVector elt = singleton elt
 snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
@@ -194,7 +218,7 @@ snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
                , vecTail = [elt]
                , intVecPtrs = pushTail sz t sh (intVecPtrs v)
                }
-snoc _ _ = error "Internal nodes should not be exposed to the user"
+snoc _ _ = error "Data.Vector.Persistent.snoc: Internal nodes should not be exposed to the user"
 
 pushTail :: Int -> [a] -> Int -> Array (Vector a) -> Array (Vector a)
 pushTail cnt t = go
@@ -214,6 +238,51 @@ newPath level t
   | level == 0 = DataNode (A.fromList 32 (reverse t))
   | otherwise = InternalNode $ A.fromList 1 $ [newPath (level - 5) t]
 
+-- | Update a single element at @ix@ with new value @elt@ in @v@. (O(1))
+--
+-- > update ix elt v
+update :: Int -> a -> Vector a -> Vector a
+update ix elt = (// [(ix, elt)])
+
+-- | Bulk update.
+--
+-- > v // updates
+--
+-- For each (index, element) pair in @updates@, modify @v@ such that
+-- the @index@th position of @v@ is @element@.
+-- Indices in @updates@ that are not in @v@ are ignored
+(//) :: Vector a -> [(Int, a)] -> Vector a
+(//)  = foldr replaceElement
+
+replaceElement :: (Int, a) -> Vector a -> Vector a
+replaceElement _ EmptyVector = EmptyVector
+replaceElement (ix, elt) v@(RootNode { vecSize = sz, vecShift = sh, vecTail = t })
+  -- Invalid index
+  | sz <= ix || ix < 0 = v
+  -- Item is in tail,
+  | ix >= toff =
+    let tix = sz - 1 - ix
+        (keepHead, _:keepTail) = L.splitAt tix t
+    in v { vecTail = keepHead ++ (elt : keepTail) }
+  -- Otherwise the item to be replaced is in the tree
+  | otherwise = v { intVecPtrs = go sh (intVecPtrs v) }
+  where
+    toff = tailOffset v
+    go level vec
+      -- At the data level, modify the vector and start propagating it up
+      | level == 5 =
+        let vix = (ix `shiftR` level) .&. 0x1f
+            vec' = A.index vec vix
+            dnode = DataNode $ A.update (dataVec vec') (ix .&. 0x1f) elt
+        in A.update vec vix dnode
+      -- In the tree, find the appropriate sub-array, call
+      -- recursively, and re-allocate current array
+      | otherwise =
+          let vix = (ix `shiftR` level) .&. 0x1f
+              vec' = A.index vec vix
+              rnode = go (level - 5) (intVecPtrs vec')
+          in A.update vec vix (InternalNode rnode)
+replaceElement _ _ = error "Data.Vector.Persistent.replaceElement: should not see internal nodes"
 
 tailOffset :: Vector a -> Int
 tailOffset v
@@ -222,5 +291,6 @@ tailOffset v
   where
     len = length v
 
+-- | Construct a vector from a list. (O(n))
 fromList :: [a] -> Vector a
 fromList = F.foldl' snoc empty

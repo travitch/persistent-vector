@@ -6,6 +6,7 @@ import Test.QuickCheck
 
 import qualified Data.Foldable as F
 import Data.Monoid
+import qualified Data.List as L
 import qualified Data.Traversable as T
 
 import Data.Vector.Persistent ( Vector )
@@ -26,6 +27,7 @@ tests :: [Test]
 tests = [ testProperty "toListFromListIdent" prop_toListFromListIdentity
         , testProperty "foldrWorks" prop_foldrWorks
         , testProperty "foldlWorks" prop_foldlWorks
+        , testProperty "updateWorks" prop_updateWorks
         , testProperty "mappendWorks" prop_mappendWorks
         ]
 
@@ -43,6 +45,18 @@ prop_foldrWorks (InputList il) =
 prop_foldlWorks :: InputList -> Bool
 prop_foldlWorks (InputList il) =
   F.foldl' (flip (:)) [] il == F.foldl (flip (:)) [] (V.fromList il)
+
+prop_updateWorks :: (InputList, Int, Int) -> Property
+prop_updateWorks (InputList il, ix, repl) =
+  ix >= 0 ==> rlist == F.toList (v V.// [(ix, repl)])
+  where
+    v = V.fromList il
+    (keepHead, _:keepTail) = L.splitAt ix il
+    rlist = case null il of
+      True -> []
+      False -> case ix >= length il of
+        True -> il
+        False -> keepHead ++ (repl : keepTail)
 
 prop_mappendWorks :: (InputList, InputList) -> Bool
 prop_mappendWorks (InputList il1, InputList il2) =
