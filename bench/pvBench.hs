@@ -141,11 +141,7 @@ main = defaultMainWith defaultConfig setup [
   bgroup "build1000" [ bench "IM1000" $ whnf testIMBuild 1000
                      , bench "Seq1000" $ whnf testSeqBuild 1000
                      , bench "Vec1000" $ whnf testVecBuild 1000
-                     ],
-  bgroup "build10000" [ bench "IM10000" $ whnf testIMBuild 10000
-                      , bench "Seq10000" $ whnf testSeqBuild 10000
-                      , bench "Vec10000" $ whnf testVecBuild 10000
-                      ]
+                     ]
   ]
   where
     setup = do
