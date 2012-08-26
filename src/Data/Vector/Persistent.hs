@@ -176,7 +176,7 @@ index v ix
 unsafeIndex :: Vector a -> Int -> a
 unsafeIndex vec userIndex
   | ix >= tailOffset vec =
-    vecTail vec !! (ix .&. 0x1f)
+    reverse (vecTail vec) !! (ix .&. 0x1f)
   | otherwise = go (vecShift vec) vec
   where
     -- The user is indexing from zero but there could be some masked
