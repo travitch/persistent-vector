@@ -33,6 +33,7 @@ module Data.Vector.Persistent (
   snoc,
   update,
   (//),
+  slice,
   -- * Conversion
   fromList
   ) where
@@ -58,6 +59,7 @@ import qualified Data.Vector.Persistent.Array as A
 data Vector a = EmptyVector
               | RootNode { vecSize :: !Int
                          , vecShift :: !Int
+                         , vecOffset :: !Int
                          , vecTail :: ![a]
                          , intVecPtrs :: !(Array (Vector a))
                          }
@@ -91,10 +93,10 @@ pvFmap f = go
     go EmptyVector = EmptyVector
     go (DataNode v) = DataNode (A.map f v)
     go (InternalNode v) = InternalNode (A.map (fmap f) v)
-    go (RootNode sz sh t v) =
+    go (RootNode sz sh off t v) =
       let t' = map f t
           v' = A.map (fmap f) v
-      in RootNode sz sh t' v'
+      in RootNode sz sh off t' v'
 
 {-# INLINABLE pvFoldr #-}
 pvFoldr :: (a -> b -> b) -> b -> Vector a -> b
@@ -104,7 +106,7 @@ pvFoldr f = go
     go seed (DataNode a) = {-# SCC "gorDataNode" #-} A.foldr f seed a
     go seed (InternalNode as) = {-# SCC "gorInternalNode" #-}
       A.foldr (flip go) seed as
-    go seed (RootNode _ _ t as) = {-# SCC "gorRootNode" #-}
+    go seed (RootNode _ _ off t as) = {-# SCC "gorRootNode" #-}
       let tseed = F.foldl' (flip f) seed t
       in A.foldr (flip go) tseed as
 
@@ -116,7 +118,7 @@ pvFoldl f = go
     go seed (DataNode a) = {-# SCC "golDataNode" #-} A.foldl' f seed a
     go seed (InternalNode as) =
       A.foldl' go seed as
-    go seed (RootNode _ _ t as) =
+    go seed (RootNode _ _ off t as) =
       let rseed = A.foldl' go seed as
       in F.foldr (flip f) rseed t
 
@@ -127,8 +129,8 @@ pvTraverse f = go
     go EmptyVector = pure EmptyVector
     go (DataNode a) = DataNode <$> A.traverse f a
     go (InternalNode as) = InternalNode <$> A.traverse go as
-    go (RootNode sz sh t as) =
-      RootNode sz sh <$> T.traverse f t <*> A.traverse go as
+    go (RootNode sz sh off t as) =
+      RootNode sz sh off <$> T.traverse f t <*> A.traverse go as
 
 {-# INLINABLE pvAppend #-}
 pvAppend :: Vector a -> Vector a -> Vector a
@@ -141,7 +143,7 @@ pvRnf :: (NFData a) => Vector a -> ()
 pvRnf EmptyVector = ()
 pvRnf (DataNode a) = rnf a
 pvRnf (InternalNode a) = rnf a
-pvRnf (RootNode _ _ t as) = rnf as `seq` rnf t
+pvRnf (RootNode _ _ _ t as) = rnf as `seq` rnf t
 
 -- Functions
 
@@ -157,7 +159,7 @@ null _ = False
 -- | Get the length of the vector. (O(1))
 length :: Vector a -> Int
 length EmptyVector = 0
-length RootNode { vecSize = s } = s
+length RootNode { vecSize = s, vecOffset = off } = s - off
 length InternalNode {} = error "Data.Vector.Persistent.length: Internal nodes should not be exposed"
 length DataNode {} = error "Data.Vector.Persistent.length: Data nodes should not be exposed"
 
@@ -172,11 +174,15 @@ index v ix
 -- Note that out-of-bounds indexing might not even crash - it will
 -- usually just return nonsense values.
 unsafeIndex :: Vector a -> Int -> a
-unsafeIndex vec ix
+unsafeIndex vec userIndex
   | ix >= tailOffset vec =
     vecTail vec !! (ix .&. 0x1f)
   | otherwise = go (vecShift vec) vec
   where
+    -- The user is indexing from zero but there could be some masked
+    -- portion of the vector due to the offset - we have to correct to
+    -- an internal offset
+    ix = vecOffset vec + userIndex
     go level v
       | level == 0 = A.index (dataVec v) (ix .&. 0x1f)
       | otherwise =
@@ -189,6 +195,7 @@ singleton :: a -> Vector a
 singleton elt =
   RootNode { vecSize = 1
            , vecShift = 5
+           , vecOffset = 0
            , vecTail = [elt]
            , intVecPtrs = A.fromList 0 []
            }
@@ -211,6 +218,7 @@ snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
   | sz `shiftR` 5 > 1 `shiftL` sh =
     RootNode { vecSize = sz + 1
              , vecShift = sh + 5
+             , vecOffset = vecOffset v
              , vecTail = [elt]
              , intVecPtrs = A.fromList 2 [ InternalNode (intVecPtrs v)
                                          , newPath sh t
@@ -220,6 +228,7 @@ snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
   | otherwise =
       RootNode { vecSize = sz + 1
                , vecShift = sh
+               , vecOffset = vecOffset v
                , vecTail = [elt]
                , intVecPtrs = pushTail sz t sh (intVecPtrs v)
                }
@@ -287,6 +296,36 @@ replaceElement (ix, elt) v@(RootNode { vecSize = sz, vecShift = sh, vecTail = t 
         vix = (ix `shiftR` level) .&. 0x1f
         vec' = A.index vec vix
 replaceElement _ _ = error "Data.Vector.Persistent.replaceElement: should not see internal nodes"
+
+-- | Return a slice of @v@ of length @length@ starting at index
+-- @start@.  The returned vector may have fewer than @length@ elements
+-- if the bounds are off on either side (the start is negative or
+-- length takes it past the end).
+--
+-- A slice of negative or zero length is the empty vector.
+--
+-- > slice start length v
+slice :: Int -> Int -> Vector a -> Vector a
+slice _ _ EmptyVector = EmptyVector
+slice start len v@RootNode { vecSize = sz, vecOffset = off, vecTail = t }
+  | len <= 0 = EmptyVector
+  -- Start was negative, so we really start at zero and retain at most
+  -- (len + start) elements.  In this case vecOffset remains the same.
+  | start < 0 =
+    let eltsRetained = min (len + start) sz
+    in v { vecSize = eltsRetained
+         , vecTail = L.drop (sz - eltsRetained) t
+         }
+  | otherwise =
+      let newOff = off + start
+          newSize = min (newOff + len) sz
+      in v { vecOffset = newOff
+           , vecSize = newSize
+           , vecTail = L.drop (sz - newSize) t
+           }
+slice _ _ _ = error "Data.Vector.Persistent.slice: Internal node"
+
+-- slice should actually drop unneeded elements from the tail
 
 tailOffset :: Vector a -> Int
 tailOffset v
