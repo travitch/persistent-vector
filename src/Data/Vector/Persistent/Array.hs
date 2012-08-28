@@ -99,8 +99,8 @@ instance Ord a => Ord (Array a) where
 
 arrayEq :: (Eq a) => Array a -> Array a -> Bool
 arrayEq a1 a2
-  | length a1 == length a2 = False
-  | otherwise = P.foldr (\i a -> a && index a1 i == index a2 i) True [0..(length a1)]
+  | length a1 /= length a2 = False
+  | otherwise = P.foldr (\i a -> a && index a1 i == index a2 i) True [0..(length a1 - 1)]
 
 arrayCompare :: (Ord a) => Array a -> Array a -> Ordering
 arrayCompare a1 a2
