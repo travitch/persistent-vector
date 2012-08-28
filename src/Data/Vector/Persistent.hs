@@ -23,21 +23,41 @@
 --   Each cons call will modify the offset of its result vector.
 module Data.Vector.Persistent (
   Vector,
+  -- * Construction
   empty,
+  singleton,
+  snoc,
+  fromList,
+  -- * Queries
   null,
   length,
-  singleton,
+  -- * Indexing
   index,
   unsafeIndex,
-  snoc,
+  take,
+  drop,
+  splitAt,
+  -- * Slicing
+  slice,
+  shrink,
+  -- * Modification
   update,
   (//),
-  slice,
-  -- * Conversion
-  fromList
+  -- * Folds
+  foldr,
+  foldl',
+  -- * Transformations
+  map,
+  reverse,
+  -- * Searches
+  filter,
+  partition
   ) where
 
-import Prelude hiding ( null, length, tail )
+import Prelude hiding ( null, length, tail, take,
+                        drop, map, foldr, reverse,
+                        splitAt, filter
+                      )
 
 import Control.Applicative hiding ( empty )
 import Control.DeepSeq
@@ -78,15 +98,14 @@ instance (Ord a) => Ord (Vector a) where
   compare = pvCompare
 
 instance Foldable Vector where
-  foldr = pvFoldr
-  foldl = pvFoldl
+  foldr = foldr
 
 instance Functor Vector where
-  fmap = pvFmap
+  fmap = map
 
 instance Monoid (Vector a) where
   mempty = empty
-  mappend = pvAppend
+  mappend = append
 
 instance Traversable Vector where
   traverse = pvTraverse
@@ -146,33 +165,79 @@ map f = go
     go EmptyVector = EmptyVector
     go (DataNode v) = DataNode (A.map f v)
     go (InternalNode v) = InternalNode (A.map (fmap f) v)
-    go (RootNode sz sh off t v) =
-      let t' = map f t
+    go (RootNode sz sh off cap t v) =
+      let t' = L.map f t
           v' = A.map (fmap f) v
-      in RootNode sz sh off t' v'
+      in RootNode sz sh off cap t' v'
 
-{-# INLINABLE pvFoldr #-}
-pvFoldr :: (a -> b -> b) -> b -> Vector a -> b
-pvFoldr f = go
+{-# INLINABLE foldr #-}
+-- | O(n) Right fold over the vector
+foldr :: (a -> b -> b) -> b -> Vector a -> b
+foldr _ s0 EmptyVector = s0
+foldr f s0 v
+  | isNotSliced v = sgo v s0
+  | otherwise =
+    case go v (s0, max 0 (vecCapacity v - vecSize v), length v) of (r, _, _) -> r
+  where
+    go EmptyVector seed = seed
+    go (DataNode a) (seed, nskip, len)
+      | len <= 0 = (seed, 0, 0)
+      | nskip == 0 = (A.boundedFoldr f (32 - len) 32 seed a, 0, len - A.length a)
+      | nskip >= 32 = (seed, nskip - 32, len)
+      | otherwise =
+        let end = min (max 0 (32 - nskip)) 32
+            start = 32 - (len + nskip)
+            taken = end - max 0 start
+        in (A.boundedFoldr f start end seed a, 0, len - taken)
+    go (InternalNode as) seed =
+      A.foldr go seed as
+      -- Note: if there is a tail at all, the elements are live (slice
+      -- drops unused tail elements)
+    go (RootNode _ _ _ _ t as) (s, nskip, l) =
+      let tseed = L.foldl' (flip f) s t
+          seed = (tseed, nskip, l - L.length t)
+      in A.foldr go seed as
+
+    -- A simpler variant for unsliced vectors (the common case) that is
+    -- significantly more efficient
+    sgo EmptyVector seed = seed
+    sgo (DataNode a) seed = A.foldr f seed a
+    sgo (InternalNode as) seed = A.foldr sgo seed as
+    sgo (RootNode _ _ _ _ t as) seed =
+      let tseed = L.foldl' (flip f) seed t
+      in A.foldr sgo tseed as
+
+{-# INLINABLE foldl' #-}
+-- | O(n) Strict left fold over the vector
+foldl' :: (b -> a -> b) -> b -> Vector a -> b
+foldl' _ s0 EmptyVector = s0
+foldl' f s0 v
+  | isNotSliced v = sgo s0 v
+  | otherwise =
+    case go (s0, vecOffset v, length v) v of (r, _, _) -> r
   where
     go seed EmptyVector = seed
-    go seed (DataNode a) = {-# SCC "gorDataNode" #-} A.foldr f seed a
-    go seed (InternalNode as) = {-# SCC "gorInternalNode" #-}
-      A.foldr (flip go) seed as
-    go seed (RootNode _ _ off t as) = {-# SCC "gorRootNode" #-}
-      let tseed = F.foldl' (flip f) seed t
-      in A.foldr (flip go) tseed as
-
-{-# INLINABLE pvFoldl #-}
-pvFoldl :: (b -> a -> b) -> b -> Vector a -> b
-pvFoldl f = go
-  where
-    go seed EmptyVector = seed
-    go seed (DataNode a) = {-# SCC "golDataNode" #-} A.foldl' f seed a
+    go (seed, nskip, len) (DataNode a)
+      | len <= 0 = (seed, 0, 0)
+      | nskip == 0 = (A.boundedFoldl' f 0 (min len 32) seed a, 0, len - A.length a)
+      | nskip >= 32 = (seed, nskip - 32, len)
+      | otherwise =
+        let end = min 32 (len + nskip)
+            start = nskip
+            taken = end - max 0 start
+        in (A.boundedFoldl' f start end seed a, 0, len - taken)
     go seed (InternalNode as) =
       A.foldl' go seed as
-    go seed (RootNode _ _ off t as) =
-      let rseed = A.foldl' go seed as
+    go (s, nskip, l) (RootNode _ _ _ _ t as) =
+      let (rseed, _, _) = A.foldl' go (s, nskip, l - L.length t) as
+      in (L.foldr (flip f) rseed t, 0, 0)
+
+    sgo seed EmptyVector = seed
+    sgo seed (DataNode a) = A.foldl' f seed a
+    sgo seed (InternalNode as) =
+      A.foldl' sgo seed as
+    sgo seed (RootNode _ _ _ _ t as) =
+      let rseed = A.foldl' sgo seed as
       in F.foldr (flip f) rseed t
 
 {-# INLINABLE pvTraverse #-}
@@ -182,54 +247,49 @@ pvTraverse f = go
     go EmptyVector = pure EmptyVector
     go (DataNode a) = DataNode <$> A.traverse f a
     go (InternalNode as) = InternalNode <$> A.traverse go as
-    go (RootNode sz sh off t as) =
-      RootNode sz sh off <$> T.traverse f t <*> A.traverse go as
+    go (RootNode sz sh off cap t as) =
+      RootNode sz sh off cap <$> T.traverse f t <*> A.traverse go as
 
-{-# INLINABLE pvAppend #-}
-pvAppend :: Vector a -> Vector a -> Vector a
-pvAppend EmptyVector v = v
-pvAppend v EmptyVector = v
-pvAppend v1 v2 = F.foldl' snoc v1 (F.toList v2)
+{-# INLINABLE append #-}
+append :: Vector a -> Vector a -> Vector a
+append EmptyVector v = v
+append v EmptyVector = v
+append v1 v2 = F.foldl' snoc v1 (F.toList v2)
 
 {-# INLINABLE pvRnf #-}
 pvRnf :: (NFData a) => Vector a -> ()
-pvRnf EmptyVector = ()
-pvRnf (DataNode a) = rnf a
-pvRnf (InternalNode a) = rnf a
-pvRnf (RootNode _ _ _ t as) = rnf as `seq` rnf t
+pvRnf = F.foldr deepseq ()
 
--- Functions
-
--- | The empty vector
+-- | O(1) The empty vector
 empty :: Vector a
 empty = EmptyVector
 
--- | Test to see if the vector is empty. (O(1))
+-- | O(1) Test to see if the vector is empty.
 null :: Vector a -> Bool
 null EmptyVector = True
 null _ = False
 
--- | Get the length of the vector. (O(1))
+-- | O(1) Get the length of the vector.
 length :: Vector a -> Int
 length EmptyVector = 0
 length RootNode { vecSize = s, vecOffset = off } = s - off
 length InternalNode {} = error "Data.Vector.Persistent.length: Internal nodes should not be exposed"
 length DataNode {} = error "Data.Vector.Persistent.length: Data nodes should not be exposed"
 
--- | Bounds-checked indexing into a vector. (O(1))
+-- | O(1) Bounds-checked indexing into a vector.
 index :: Vector a -> Int -> Maybe a
 index v ix
   | length v > ix = Just $ unsafeIndex v ix
   | otherwise = Nothing
 
--- | Unchecked indexing into a vector. (O(1))
+-- | O(1) Unchecked indexing into a vector.
 --
 -- Note that out-of-bounds indexing might not even crash - it will
 -- usually just return nonsense values.
 unsafeIndex :: Vector a -> Int -> a
 unsafeIndex vec userIndex
-  | ix >= tailOffset vec =
-    reverse (vecTail vec) !! (ix .&. 0x1f)
+  | ix >= tailOffset vec && vecCapacity vec < vecSize vec =
+    L.reverse (vecTail vec) !! (ix .&. 0x1f)
   | otherwise = go (vecShift vec) vec
   where
     -- The user is indexing from zero but there could be some masked
@@ -243,16 +303,18 @@ unsafeIndex vec userIndex
             v' = intVecPtrs v
         in go (level - 5) (A.index v' nextVecIx)
 
--- | Construct a vector with a single element. (O(1))
+-- | O(1) Construct a vector with a single element.
 singleton :: a -> Vector a
 singleton elt =
   RootNode { vecSize = 1
            , vecShift = 5
            , vecOffset = 0
+           , vecCapacity = 0
            , vecTail = [elt]
            , intVecPtrs = A.fromList 0 []
            }
 
+-- | A helper to copy an array and add an element to the end.
 arraySnoc :: Array a -> a -> Array a
 arraySnoc a elt = A.run $ do
   let alen = A.length a
@@ -261,10 +323,16 @@ arraySnoc a elt = A.run $ do
   A.write a' alen elt
   return a'
 
--- | Append an element to the end of the vector. (O(1))
+-- | O(1) Append an element to the end of the vector.
 snoc :: Vector a -> a -> Vector a
 snoc EmptyVector elt = singleton elt
 snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
+  -- In this case, we are operating on a slice that has free space at
+  -- the end inside of its tree.  Use 'update' to replace the formerly
+  -- unreachable element and then make it reachable.
+  | vecCapacity v > sz =
+    let v' = update sz elt v
+    in v' { vecSize = vecSize v' + 1 }
   -- Room in tail
   | sz .&. 0x1f /= 0 = v { vecTail = elt : t, vecSize = sz + 1 }
   -- Overflow current root
@@ -272,6 +340,7 @@ snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
     RootNode { vecSize = sz + 1
              , vecShift = sh + 5
              , vecOffset = vecOffset v
+             , vecCapacity = vecCapacity v + 32
              , vecTail = [elt]
              , intVecPtrs = A.fromList 2 [ InternalNode (intVecPtrs v)
                                          , newPath sh t
@@ -282,16 +351,19 @@ snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
       RootNode { vecSize = sz + 1
                , vecShift = sh
                , vecOffset = vecOffset v
+               , vecCapacity = vecCapacity v + 32
                , vecTail = [elt]
                , intVecPtrs = pushTail sz t sh (intVecPtrs v)
                }
 snoc _ _ = error "Data.Vector.Persistent.snoc: Internal nodes should not be exposed to the user"
 
+-- | A recursive helper for 'snoc'.  This finds the place to add new
+-- elements.
 pushTail :: Int -> [a] -> Int -> Array (Vector a) -> Array (Vector a)
 pushTail cnt t = go
   where
     go level parent
-      | level == 5 = arraySnoc parent (DataNode (A.fromList 32 (reverse t)))
+      | level == 5 = arraySnoc parent (DataNode (A.fromList 32 (L.reverse t)))
       | subIdx < A.length parent =
         let nextVec = A.index parent subIdx
             toInsert = go (level - 5) (intVecPtrs nextVec)
@@ -300,18 +372,21 @@ pushTail cnt t = go
       where
         subIdx = ((cnt - 1) `shiftR` level) .&. 0x1f
 
+-- | The other recursive helper for 'snoc'.  This one builds out a
+-- sub-tree to the current depth.
 newPath :: Int -> [a] -> Vector a
 newPath level t
-  | level == 0 = DataNode (A.fromList 32 (reverse t))
+  | level == 0 = DataNode (A.fromList 32 (L.reverse t))
   | otherwise = InternalNode $ A.fromList 1 $ [newPath (level - 5) t]
 
--- | Update a single element at @ix@ with new value @elt@ in @v@. (O(1))
+-- | O(1) Update a single element at @ix@ with new value @elt@ in
+-- @v@.
 --
 -- > update ix elt v
 update :: Int -> a -> Vector a -> Vector a
 update ix elt = (// [(ix, elt)])
 
--- | Bulk update.
+-- | O(n) Bulk update.
 --
 -- > v // updates
 --
@@ -319,21 +394,22 @@ update ix elt = (// [(ix, elt)])
 -- the @index@th position of @v@ is @element@.
 -- Indices in @updates@ that are not in @v@ are ignored
 (//) :: Vector a -> [(Int, a)] -> Vector a
-(//)  = foldr replaceElement
+(//) = L.foldr replaceElement
 
 replaceElement :: (Int, a) -> Vector a -> Vector a
 replaceElement _ EmptyVector = EmptyVector
-replaceElement (ix, elt) v@(RootNode { vecSize = sz, vecShift = sh, vecTail = t })
+replaceElement (userIndex, elt) v@(RootNode { vecSize = sz, vecShift = sh, vecTail = t })
   -- Invalid index
   | sz <= ix || ix < 0 = v
   -- Item is in tail,
-  | ix >= toff =
+  | ix >= toff && vecCapacity v < sz =
     let tix = sz - 1 - ix
         (keepHead, _:keepTail) = L.splitAt tix t
     in v { vecTail = keepHead ++ (elt : keepTail) }
   -- Otherwise the item to be replaced is in the tree
   | otherwise = v { intVecPtrs = go sh (intVecPtrs v) }
   where
+    ix = userIndex + vecOffset v
     toff = tailOffset v
     go level vec
       -- At the data level, modify the vector and start propagating it up
@@ -350,7 +426,7 @@ replaceElement (ix, elt) v@(RootNode { vecSize = sz, vecShift = sh, vecTail = t 
         vec' = A.index vec vix
 replaceElement _ _ = error "Data.Vector.Persistent.replaceElement: should not see internal nodes"
 
--- | Return a slice of @v@ of length @length@ starting at index
+-- | O(1) Return a slice of @v@ of length @length@ starting at index
 -- @start@.  The returned vector may have fewer than @length@ elements
 -- if the bounds are off on either side (the start is negative or
 -- length takes it past the end).
@@ -358,9 +434,16 @@ replaceElement _ _ = error "Data.Vector.Persistent.replaceElement: should not se
 -- A slice of negative or zero length is the empty vector.
 --
 -- > slice start length v
+--
+-- Note that a slice retains all of the references that the vector it
+-- is derived from has.  They are not reachable via any traversals and
+-- are not counted towards its size, but this may lead to references
+-- living longer than intended.  If is important to you that this not
+-- happen, call 'shrink' on the return value of 'slice' to drop unused
+-- space and references.
 slice :: Int -> Int -> Vector a -> Vector a
 slice _ _ EmptyVector = EmptyVector
-slice start len v@RootNode { vecSize = sz, vecOffset = off, vecTail = t }
+slice start userLen v@RootNode { vecSize = sz, vecOffset = off, vecCapacity = cap, vecTail = t }
   | len <= 0 = EmptyVector
   -- Start was negative, so we really start at zero and retain at most
   -- (len + start) elements.  In this case vecOffset remains the same.
@@ -369,16 +452,77 @@ slice start len v@RootNode { vecSize = sz, vecOffset = off, vecTail = t }
     in v { vecSize = eltsRetained
          , vecTail = L.drop (sz - eltsRetained) t
          }
+  -- If capacity < start, the tail needs to be modified from the front
+  -- in fact, max 0 (start - capacity) items need to be dropped from the
+  -- list
   | otherwise =
       let newOff = off + start
           newSize = min (newOff + len) sz
+          ntake = max 0 (start - cap)
+          t' = L.drop (sz - newSize) t
       in v { vecOffset = newOff
            , vecSize = newSize
-           , vecTail = L.drop (sz - newSize) t
+           , vecTail = L.take (L.length t' - ntake) t'
            }
+  where
+    len = max 0 (min userLen (sz - start))
 slice _ _ _ = error "Data.Vector.Persistent.slice: Internal node"
 
--- slice should actually drop unneeded elements from the tail
+-- Note that slice removes unneeded elements from the tail so that
+-- snoc can mostly work unchanged.  snoc does need to change if the
+-- slice takes so many elements that parts of the tree contain
+-- inaccessible elements.  In that case, just use update instead.
+
+-- | O(1) Take the first @i@ elements of the vector.
+--
+-- Note that this is just a wrapper around slice and the resulting
+-- slice retains references that are inaccessible.  Use 'shrink' if
+-- this is undesirable.
+take :: Int -> Vector a -> Vector a
+take = slice 0
+
+-- | O(1) Drop @i@ elements from the front of the vector.
+--
+-- Note that this is just a wrapper around slice.
+drop :: Int -> Vector a -> Vector a
+drop i v = slice i (length v) v
+
+-- | O(1) Split the vector at the given position.
+splitAt :: Int -> Vector a -> (Vector a, Vector a)
+splitAt ix v = (take ix v, drop ix v)
+
+-- | O(n) Force a sliced vector to drop any unneeded space and
+-- references.
+--
+-- This is a no-op for an un-sliced vector.
+shrink :: Vector a -> Vector a
+shrink EmptyVector = EmptyVector
+shrink v
+  | isNotSliced v = v
+  | otherwise = fromList $ F.toList v
+
+-- | O(n) Reverse a vector
+reverse :: Vector a -> Vector a
+reverse = fromList . foldl' (flip (:)) []
+
+-- | O(n) Filter according to the predicate
+filter :: (a -> Bool) -> Vector a -> Vector a
+filter p = foldl' go empty
+  where
+    go acc e = if p e then snoc acc e else acc
+
+-- | O(n) Return the elements that do and do not obey the predicate
+partition :: (a -> Bool) -> Vector a -> (Vector a, Vector a)
+partition p = foldl' go (empty, empty)
+  where
+    go (atrue, afalse) e =
+      if p e then (snoc atrue e, afalse) else (atrue, snoc afalse e)
+
+-- | O(n) Construct a vector from a list.
+fromList :: [a] -> Vector a
+fromList = F.foldl' snoc empty
+
+-- Helpers
 
 tailOffset :: Vector a -> Int
 tailOffset v
