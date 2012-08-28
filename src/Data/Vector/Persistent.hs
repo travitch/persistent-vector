@@ -1,19 +1,18 @@
 -- | This is a port of the persistent vector from clojure to Haskell.
+-- It is spine-strict and lazy in the elements.
 --
--- The implementation is based on array mapped tries.
+-- The implementation is based on array mapped tries.  The complexity
+-- bounds given are mostly O(1), but only if you are willing to accept
+-- that the tree cannot have height greater than 7 on 32 bit systems
+-- and maybe 8 on 64 bit systems.
 --
 -- TODO:
 --
--- * Implement slice.  Do this by adding an offset field to the
---   RootNode and maintain an appropriate length.  Change append to
---   not always snoc the new element - if there is room, its position
---   in already allocated vectors may need to be found and updated
---   instead.  Slice should have zero cost.
+-- * More of the Data.Sequence API
 --
--- * This should make it easy to implement things like take and drop &c
---
--- * Implement a function to free the extra space taken by a slice
---   (drop references that are inaccessible). - shrink
+-- * More efficient Eq and Ord instances.  This is tricky in the
+--   presence of slicing.  There will be faster implementations for
+--   unsliced inputs.
 --
 -- * Implement something to make parallel reductions simple (maybe
 --   something like vector-strategies)
