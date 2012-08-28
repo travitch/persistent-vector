@@ -5,22 +5,6 @@
 -- bounds given are mostly O(1), but only if you are willing to accept
 -- that the tree cannot have height greater than 7 on 32 bit systems
 -- and maybe 8 on 64 bit systems.
---
--- TODO:
---
--- * More of the Data.Sequence API
---
--- * More efficient Eq and Ord instances.  This is tricky in the
---   presence of slicing.  There will be faster implementations for
---   unsliced inputs.
---
--- * Implement something to make parallel reductions simple (maybe
---   something like vector-strategies)
---
--- * Implement cons.  Cons can use the space that is hidden by the
---   offset cheaply.  It can also make a variant of pushTail
---   (pushHead) that allocates fragments of preceeding sub-trees.
---   Each cons call will modify the offset of its result vector.
 module Data.Vector.Persistent (
   Vector,
   -- * Construction
