@@ -14,19 +14,19 @@ import Data.Vector.Persistent ( Vector )
 import qualified Data.Vector.Persistent as V
 
 testListRTraversal :: [Int] -> Int
-testListRTraversal = F.foldr (+) 0
+testListRTraversal = L.foldr (+) 0
 
 testListLSTraversal :: [Int] -> Int
-testListLSTraversal = F.foldl' (+) 0
+testListLSTraversal = L.foldl' (+) 0
 
 testVecRTraversal :: Vector Int -> Int
-testVecRTraversal = F.foldr (+) 0
+testVecRTraversal = V.foldr (+) 0
 
 testIMRTraversal :: IntMap Int -> Int
 testIMRTraversal = F.foldr (+) 0
 
 testVecLTraversal :: Vector Int -> Int
-testVecLTraversal = F.foldl (+) 0
+testVecLTraversal = V.foldl' (+) 0
 
 testSeqRTraversal :: Seq Int -> Int
 testSeqRTraversal = F.foldr (+) 0
@@ -35,7 +35,7 @@ testSeqLTraversal :: Seq Int -> Int
 testSeqLTraversal = F.foldl (+) 0
 
 testVecLSTraversal :: Vector Int -> Int
-testVecLSTraversal = F.foldl' (+) 0
+testVecLSTraversal = V.foldl' (+) 0
 
 testSeqLSTraversal :: Seq Int -> Int
 testSeqLSTraversal = F.foldl' (+) 0
