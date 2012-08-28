@@ -103,6 +103,7 @@ instance (NFData a) => NFData (Vector a) where
 -- where neither input is sliced.  For sliced inputs, we currently
 -- fall back to a list conversion.
 pvEq :: (Eq a) => Vector a -> Vector a -> Bool
+pvEq EmptyVector EmptyVector = True
 pvEq v1 v2
   | length v1 /= length v2 = False
   | isNotSliced v1 && isNotSliced v2 = pvSimpleEq v1 v2
@@ -121,6 +122,7 @@ pvSimpleEq _ _ = False
 {-# INLINABLE pvCompare #-}
 -- | A dispatcher for comparison tests
 pvCompare :: (Ord a) => Vector a -> Vector a -> Ordering
+pvCompare EmptyVector EmptyVector = EQ
 pvCompare v1 v2
   | length v1 /= length v2 = compare (length v1) (length v2)
   | isNotSliced v1 && isNotSliced v2 = pvSimpleCompare v1 v2
