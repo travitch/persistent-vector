@@ -55,10 +55,13 @@ import qualified Data.Vector.Persistent.Array as A
 
 -- Note: using Int here doesn't give the full range of 32 bits on a 32
 -- bit machine (it is fine on 64)
+
+-- | Persistent vectors based on array mapped tries
 data Vector a = EmptyVector
-              | RootNode { vecSize :: !Int
-                         , vecShift :: !Int
-                         , vecOffset :: !Int
+              | RootNode { vecSize :: {-# UNPACK #-} !Int
+                         , vecShift :: {-# UNPACK #-} !Int
+                         , vecOffset :: {-# UNPACK #-} !Int
+                         , vecCapacity :: {-# UNPACK #-} !Int
                          , vecTail :: ![a]
                          , intVecPtrs :: !(Array (Vector a))
                          }
