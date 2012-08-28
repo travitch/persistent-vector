@@ -69,7 +69,13 @@ data Vector a = EmptyVector
                              }
               | DataNode { dataVec :: !(Array a)
                          }
-              deriving (Eq, Ord, Show)
+              deriving (Show)
+
+instance (Eq a) => Eq (Vector a) where
+  (==) = pvEq
+
+instance (Ord a) => Ord (Vector a) where
+  compare = pvCompare
 
 instance Foldable Vector where
   foldr = pvFoldr
@@ -88,9 +94,54 @@ instance Traversable Vector where
 instance (NFData a) => NFData (Vector a) where
   rnf = pvRnf
 
-{-# INLINABLE pvFmap #-}
-pvFmap :: (a -> b) -> Vector a -> Vector b
-pvFmap f = go
+{-# INLINABLE pvEq #-}
+-- | A dispatcher between various equality tests.  The length check is
+-- extremely cheap.  There is another optimized check for the case
+-- where neither input is sliced.  For sliced inputs, we currently
+-- fall back to a list conversion.
+pvEq :: (Eq a) => Vector a -> Vector a -> Bool
+pvEq v1 v2
+  | length v1 /= length v2 = False
+  | isNotSliced v1 && isNotSliced v2 = pvSimpleEq v1 v2
+  | otherwise = F.toList v1 == F.toList v2
+
+-- | A simple equality implementation for unsliced vectors.  This can
+-- proceed structurally.
+pvSimpleEq :: (Eq a) => Vector a -> Vector a -> Bool
+pvSimpleEq EmptyVector EmptyVector = True
+pvSimpleEq (RootNode sz1 sh1 _ _ t1 v1) (RootNode sz2 sh2 _ _ t2 v2) =
+  sz1 == sz2 && sh1 == sh2 && t1 == t2 && v1 == v2
+pvSimpleEq (DataNode a1) (DataNode a2) = a1 == a2
+pvSimpleEq (InternalNode a1) (InternalNode a2) = a1 == a2
+pvSimpleEq _ _ = False
+
+{-# INLINABLE pvCompare #-}
+-- | A dispatcher for comparison tests
+pvCompare :: (Ord a) => Vector a -> Vector a -> Ordering
+pvCompare v1 v2
+  | length v1 /= length v2 = compare (length v1) (length v2)
+  | isNotSliced v1 && isNotSliced v2 = pvSimpleCompare v1 v2
+  | otherwise = compare (F.toList v1) (F.toList v2)
+
+pvSimpleCompare :: (Ord a) => Vector a -> Vector a -> Ordering
+pvSimpleCompare EmptyVector EmptyVector = EQ
+pvSimpleCompare (RootNode _ _ _ _ t1 v1) (RootNode _ _ _ _ t2 v2) =
+  case compare v1 v2 of
+    EQ -> compare t1 t2
+    o -> o
+pvSimpleCompare (DataNode a1) (DataNode a2) = compare a1 a2
+pvSimpleCompare (InternalNode a1) (InternalNode a2) = compare a1 a2
+pvSimpleCompare EmptyVector _ = LT
+pvSimpleCompare _ EmptyVector = GT
+pvSimpleCompare (InternalNode _) (DataNode _) = GT
+pvSimpleCompare (DataNode _) (InternalNode _) = LT
+pvSimpleCompare _ _ = error "Data.Vector.Persistent.pvSimpleCompare: Unexpected mismatch"
+
+
+{-# INLINABLE map #-}
+-- | O(n) Map over the vector
+map :: (a -> b) -> Vector a -> Vector b
+map f = go
   where
     go EmptyVector = EmptyVector
     go (DataNode v) = DataNode (A.map f v)
@@ -336,6 +387,5 @@ tailOffset v
   where
     len = length v
 
--- | Construct a vector from a list. (O(n))
-fromList :: [a] -> Vector a
-fromList = F.foldl' snoc empty
+isNotSliced :: Vector a -> Bool
+isNotSliced v = vecOffset v == 0 && vecCapacity v < vecSize v
