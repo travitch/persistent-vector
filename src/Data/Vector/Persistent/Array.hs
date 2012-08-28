@@ -41,7 +41,9 @@ module Data.Vector.Persistent.Array
 
       -- * Folds
     , foldl'
+    , boundedFoldl'
     , foldr
+    , boundedFoldr
 
     , thaw
     , map
@@ -352,14 +354,31 @@ foldl' f z0 ary0 = go ary0 (length ary0) 0 z0
         | otherwise = go ary n (i+1) (f z (index ary i))
 {-# INLINE foldl' #-}
 
+boundedFoldl' :: (b -> a -> b) -> Int -> Int -> b -> Array a -> b
+boundedFoldl' f start end z0 ary0 =
+  go ary0 (min end (length ary0)) (max 0 start) z0
+  where
+    go ary n i !z
+      | i >= n = z
+      | otherwise = go ary n (i+1) (f z (index ary i))
+{-# INLINE boundedFoldl' #-}
+
 foldr :: (a -> b -> b) -> b -> Array a -> b
 foldr f z0 ary0 = go ary0 (length ary0) 0 z0
--- foldr f = \ z0 ary0 -> go ary0 (length ary0) 0 z0
   where
     go ary n i z
         | i >= n    = z
         | otherwise = f (index ary i) (go ary n (i+1) z)
 {-# INLINE foldr #-}
+
+boundedFoldr :: (a -> b -> b) -> Int -> Int -> b -> Array a -> b
+boundedFoldr f start end z0 ary0 =
+  go ary0 (min end (length ary0)) (max 0 start) z0
+  where
+    go ary n i z
+      | i >= n = z
+      | otherwise = f (index ary i) (go ary n (i+1) z)
+{-# INLINE boundedFoldr #-}
 
 undefinedElem :: a
 undefinedElem = error "Data.HashMap.Array: Undefined element"
