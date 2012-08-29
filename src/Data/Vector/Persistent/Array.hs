@@ -1,7 +1,11 @@
 {-# LANGUAGE BangPatterns, CPP, MagicHash, Rank2Types, UnboxedTuples #-}
 {-# OPTIONS_GHC -fno-full-laziness -funbox-strict-fields #-}
-
--- | Zero based arrays.
+-- |
+-- Module: Data.Vector.Persistent.Array
+-- Copyright: Johan Tibell <johan.tibell@gmail.com>
+-- License: BSD3
+--
+-- Zero based arrays.
 --
 -- Note that no bounds checking are performed.
 module Data.Vector.Persistent.Array
