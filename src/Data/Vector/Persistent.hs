@@ -171,7 +171,7 @@ pvTraverse f = go
 append :: Vector a -> Vector a -> Vector a
 append EmptyVector v = v
 append v EmptyVector = v
-append v1 v2 = F.foldl' snoc v1 (F.toList v2)
+append v1 v2 = F.foldl' snoc v1 v2
 
 {-# INLINABLE pvRnf #-}
 pvRnf :: (NFData a) => Vector a -> ()
@@ -244,7 +244,9 @@ unsafeIndex# :: Vector a -> Int -> (# a #)
 unsafeIndex# vec ix
   | ix >= tailOffset vec =
     (vecTail vec) `revIx#` (ix .&. 0x1f)
-  | otherwise = go (vecShift vec) vec
+  | otherwise =
+      let sh = vecShift vec
+      in go (sh - 5) (A.index (intVecPtrs vec) (ix `shiftR` sh))
   where
     go level v
       | level == 0 = A.index# (dataVec v) (ix .&. 0x1f)
