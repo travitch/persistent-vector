@@ -65,6 +65,7 @@ tests = [ testProperty "toListFromListIdent" prop_toListFromListIdentity
         , testProperty "mappendWorks" prop_mappendWorks
         , testProperty "shrink" prop_shrinkPreserves
         , testProperty "shrinkEq" prop_shrinkEquality
+        , testProperty "appendAfterSlice" prop_appendAfterSlice
         ]
 
 main :: IO ()
@@ -147,3 +148,10 @@ prop_shrinkEquality (SliceList il s n) =
   v0 == V.shrink v0
   where
     v0 = V.slice s n (V.fromList il)
+
+prop_appendAfterSlice :: (SliceList, Int) -> Property
+prop_appendAfterSlice (SliceList il s n, elt) =
+  n - s < L.length il ==> Just elt == V.index v1 (V.length v1 - 1)
+  where
+    v0 = V.slice s n (V.fromList il)
+    v1 = V.snoc v0 elt

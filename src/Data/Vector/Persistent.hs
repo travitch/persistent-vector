@@ -104,10 +104,13 @@ instance (NFData a) => NFData (Vector a) where
 -- fall back to a list conversion.
 pvEq :: (Eq a) => Vector a -> Vector a -> Bool
 pvEq EmptyVector EmptyVector = True
-pvEq v1 v2
+pvEq v1@RootNode { } v2@RootNode { }
   | length v1 /= length v2 = False
   | isNotSliced v1 && isNotSliced v2 = pvSimpleEq v1 v2
   | otherwise = F.toList v1 == F.toList v2
+pvEq (DataNode a1) (DataNode a2) = a1 == a2
+pvEq (InternalNode a1) (InternalNode a2) = a1 == a2
+pvEq _ _ = False
 
 -- | A simple equality implementation for unsliced vectors.  This can
 -- proceed structurally.
@@ -123,10 +126,19 @@ pvSimpleEq _ _ = False
 -- | A dispatcher for comparison tests
 pvCompare :: (Ord a) => Vector a -> Vector a -> Ordering
 pvCompare EmptyVector EmptyVector = EQ
-pvCompare v1 v2
-  | length v1 /= length v2 = compare (length v1) (length v2)
+pvCompare (DataNode a1) (DataNode a2) = compare a1 a2
+pvCompare (InternalNode a1) (InternalNode a2) = compare a1 a2
+pvCompare v1@RootNode { vecSize = s1 } v2@RootNode { vecSize = s2 }
+  | s1 /= s2 = compare s1 s2
   | isNotSliced v1 && isNotSliced v2 = pvSimpleCompare v1 v2
   | otherwise = compare (F.toList v1) (F.toList v2)
+pvCompare EmptyVector _ = LT
+pvCompare _ EmptyVector = GT
+pvCompare (DataNode _) (InternalNode _) = LT
+pvCompare (InternalNode _) (DataNode _) = GT
+pvCompare _ _ = error "Data.Vector.Persistent: unexpected root node"
+
+
 
 pvSimpleCompare :: (Ord a) => Vector a -> Vector a -> Ordering
 pvSimpleCompare EmptyVector EmptyVector = EQ
@@ -274,6 +286,7 @@ index v ix
 -- usually just return nonsense values.
 unsafeIndex :: Vector a -> Int -> a
 unsafeIndex vec userIndex
+--  | tailOffset vec < vecOffset vec = L.reverse (vecTail vec) !! (userIndex .&. 0x1f)
   | ix >= tailOffset vec && vecCapacity vec < vecSize vec =
     L.reverse (vecTail vec) !! (ix .&. 0x1f)
   | otherwise = go (vecShift vec) vec
@@ -312,13 +325,13 @@ arraySnoc a elt = A.run $ do
 -- | O(1) Append an element to the end of the vector.
 snoc :: Vector a -> a -> Vector a
 snoc EmptyVector elt = singleton elt
-snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
+snoc v@RootNode { vecSize = sz, vecShift = sh, vecOffset = off, vecTail = t } elt
   -- In this case, we are operating on a slice that has free space at
   -- the end inside of its tree.  Use 'update' to replace the formerly
   -- unreachable element and then make it reachable.
   | vecCapacity v > sz =
-    let v' = update sz elt v
-    in v' { vecSize = vecSize v' + 1 }
+    let v' = v { vecSize = sz + 1 }
+    in update (sz - off) elt v'
   -- Room in tail
   | sz .&. 0x1f /= 0 = v { vecTail = elt : t, vecSize = sz + 1 }
   -- Overflow current root
@@ -431,6 +444,15 @@ slice :: Int -> Int -> Vector a -> Vector a
 slice _ _ EmptyVector = EmptyVector
 slice start userLen v@RootNode { vecSize = sz, vecOffset = off, vecCapacity = cap, vecTail = t }
   | len <= 0 = EmptyVector
+  -- All the retained data is in the tail, so zero everything else out
+  | toff < start =
+    let t' = L.reverse $ L.take userLen $ L.drop (start - toff) $ L.reverse t
+    in v { vecOffset = 0
+         , vecCapacity = 0
+         , intVecPtrs = A.fromList 0 []
+         , vecSize = L.length t'
+         , vecTail = t'
+         }
   -- Start was negative, so we really start at zero and retain at most
   -- (len + start) elements.  In this case vecOffset remains the same.
   | start < 0 =
@@ -451,8 +473,12 @@ slice start userLen v@RootNode { vecSize = sz, vecOffset = off, vecCapacity = ca
            , vecTail = L.take (L.length t' - ntake) t'
            }
   where
+    toff = tailOffset v
     len = max 0 (min userLen (sz - start))
 slice _ _ _ = error "Data.Vector.Persistent.slice: Internal node"
+
+-- Note: if all data is in the tail (tailOffset < offset), drop all of
+-- the data in the body and reset size/offset/cap
 
 -- Note that slice removes unneeded elements from the tail so that
 -- snoc can mostly work unchanged.  snoc does need to change if the
@@ -511,11 +537,12 @@ fromList = F.foldl' snoc empty
 -- Helpers
 
 tailOffset :: Vector a -> Int
+tailOffset EmptyVector = 0
 tailOffset v
   | len < 32 = 0
   | otherwise = (len - 1) `shiftR` 5 `shiftL` 5
   where
-    len = length v
+    len = vecSize v
 
 isNotSliced :: Vector a -> Bool
 isNotSliced v = vecOffset v == 0 && vecCapacity v < vecSize v
