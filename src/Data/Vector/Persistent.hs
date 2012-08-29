@@ -252,7 +252,7 @@ pvTraverse f = go
 append :: Vector a -> Vector a -> Vector a
 append EmptyVector v = v
 append v EmptyVector = v
-append v1 v2 = F.foldl' snoc v1 (F.toList v2)
+append v1 v2 = foldl' snoc v1 v2
 
 {-# INLINABLE pvRnf #-}
 pvRnf :: (NFData a) => Vector a -> ()
