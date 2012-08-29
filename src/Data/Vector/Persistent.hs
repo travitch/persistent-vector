@@ -67,11 +67,11 @@ data Vector a = EmptyVector
                          , vecOffset :: {-# UNPACK #-} !Int
                          , vecCapacity :: {-# UNPACK #-} !Int
                          , vecTail :: ![a]
-                         , intVecPtrs :: !(Array (Vector a))
+                         , intVecPtrs :: {-# UNPACK #-} !(Array (Vector a))
                          }
-              | InternalNode { intVecPtrs :: !(Array (Vector a))
+              | InternalNode { intVecPtrs :: {-# UNPACK #-} !(Array (Vector a))
                              }
-              | DataNode { dataVec :: !(Array a)
+              | DataNode { dataVec :: {-# UNPACK #-} !(Array a)
                          }
               deriving (Show)
 
