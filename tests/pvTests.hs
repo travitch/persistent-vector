@@ -7,9 +7,6 @@ import Test.QuickCheck
 import qualified Data.Foldable as F
 import Data.Monoid
 import qualified Data.List as L
-import qualified Data.Traversable as T
-
-import Data.Vector.Persistent ( Vector )
 import qualified Data.Vector.Persistent as V
 
 newtype InputList = InputList [Int]
@@ -66,6 +63,8 @@ tests = [ testProperty "toListFromListIdent" prop_toListFromListIdentity
         , testProperty "shrink" prop_shrinkPreserves
         , testProperty "shrinkEq" prop_shrinkEquality
         , testProperty "appendAfterSlice" prop_appendAfterSlice
+        , testProperty "takeWhile" prop_takeWhile
+        , testProperty "dropWhile" prop_dropWhile
         ]
 
 main :: IO ()
@@ -155,3 +154,15 @@ prop_appendAfterSlice (SliceList il s n, elt) =
   where
     v0 = V.slice s n (V.fromList il)
     v1 = V.snoc v0 elt
+
+prop_takeWhile :: IndexableList -> Bool
+prop_takeWhile (IndexableList il ix) =
+  L.takeWhile (<ix) il == F.toList v
+  where
+    v = V.takeWhile (<ix) $ V.fromList il
+
+prop_dropWhile :: IndexableList -> Bool
+prop_dropWhile (IndexableList il ix) =
+  L.dropWhile (<ix) il == F.toList v
+  where
+    v = V.dropWhile (<ix) $ V.fromList il

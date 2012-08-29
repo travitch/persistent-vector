@@ -35,12 +35,14 @@ module Data.Vector.Persistent (
   reverse,
   -- * Searches
   filter,
-  partition
+  partition,
+  takeWhile,
+  dropWhile
   ) where
 
 import Prelude hiding ( null, length, tail, take,
                         drop, map, foldr, reverse,
-                        splitAt, filter
+                        splitAt, filter, takeWhile, dropWhile
                       )
 
 import Control.Applicative hiding ( empty )
@@ -529,14 +531,41 @@ filter p = foldl' go empty
 
 -- | O(n) Return the elements that do and do not obey the predicate
 partition :: (a -> Bool) -> Vector a -> (Vector a, Vector a)
-partition p = foldl' go (empty, empty)
+partition p = spToPair . foldl' go (SP empty empty)
   where
-    go (atrue, afalse) e =
-      if p e then (snoc atrue e, afalse) else (atrue, snoc afalse e)
+    go (SP atrue afalse) e =
+      if p e then SP (snoc atrue e) afalse else SP atrue (snoc afalse e)
 
 -- | O(n) Construct a vector from a list.
 fromList :: [a] -> Vector a
 fromList = F.foldl' snoc empty
+
+data StrictPair a b = SP !a !b
+
+spSnd :: StrictPair a b -> b
+spSnd (SP _ v) = v
+
+spToPair :: StrictPair a b -> (a, b)
+spToPair (SP a b) = (a, b)
+
+-- | O(n) Apply a predicate @p@ to the vector, returning the longest
+-- prefix of elements that satisfy @p@.
+takeWhile :: (a -> Bool) -> Vector a -> Vector a
+takeWhile p = spSnd . foldl' f (SP True empty)
+  where
+    f (SP True v) e =
+      if p e then SP True (snoc v e)
+      else SP False v
+    f a _ = a
+
+-- | O(n) Returns the longest suffix after @takeWhile p v@.
+dropWhile :: (a -> Bool) -> Vector a -> Vector a
+dropWhile p = spSnd . foldl' f (SP True empty)
+  where
+    f a@(SP True v) e =
+      if p e then a
+      else SP False (snoc v e)
+    f (SP False v) e = SP False (snoc v e)
 
 -- Helpers
 
