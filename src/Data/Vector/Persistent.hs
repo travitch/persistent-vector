@@ -329,16 +329,9 @@ snoc v@RootNode { vecSize = sz, vecShift = sh, vecOffset = off, vecTail = t } el
   -- In this case, we are operating on a slice that has free space at
   -- the end inside of its tree.  Use 'update' to replace the formerly
   -- unreachable element and then make it reachable.
-  | vecCapacity v > sz && sz .&. 0x1f /= 0 =
+  | vecCapacity v >= sz =
     let v' = v { vecSize = sz + 1 }
     in update (sz - off) elt v'
-  -- If we have the very rare case where a slice ends such that all of
-  -- the arrays in the tree are full and the tail is empty, we have to
-  -- be prepared to handle it here (snoc expects this case to never
-  -- happen).
-  | vecCapacity v == sz =
-      v { vecTail = [elt], vecSize = sz + 1 }
-  -- Room in tail
   | sz .&. 0x1f /= 0 = v { vecTail = elt : t, vecSize = sz + 1 }
   -- Overflow current root
   | sz `shiftR` 5 > 1 `shiftL` sh =
@@ -408,9 +401,15 @@ replaceElement (userIndex, elt) v@(RootNode { vecSize = sz, vecShift = sh, vecTa
   | sz <= ix || ix < 0 = v
   -- Item is in tail,
   | ix >= toff && vecCapacity v < sz =
-    let tix = sz - 1 - ix
-        (keepHead, _:keepTail) = L.splitAt tix t
-    in v { vecTail = keepHead ++ (elt : keepTail) }
+    case t of
+      -- The tail can only be empty if this was a slice where the last
+      -- array in the tree is full and the slice left no tail.  This
+      -- is rare but we have to handle it.
+      [] -> v { vecTail = [elt] }
+      _ ->
+        let tix = sz - 1 - ix
+            (keepHead, _:keepTail) = L.splitAt tix t
+        in v { vecTail = keepHead ++ (elt : keepTail) }
   -- Otherwise the item to be replaced is in the tree
   | otherwise = v { intVecPtrs = go sh (intVecPtrs v) }
   where
