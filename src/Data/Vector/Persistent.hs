@@ -289,7 +289,9 @@ unsafeIndex vec userIndex
 --  | tailOffset vec < vecOffset vec = L.reverse (vecTail vec) !! (userIndex .&. 0x1f)
   | ix >= tailOffset vec && vecCapacity vec < vecSize vec =
     L.reverse (vecTail vec) !! (ix .&. 0x1f)
-  | otherwise = go (vecShift vec) vec
+  | otherwise =
+      let sh = vecShift vec
+      in go (sh - 5) (A.index (intVecPtrs vec) (ix `shiftR` sh))
   where
     -- The user is indexing from zero but there could be some masked
     -- portion of the vector due to the offset - we have to correct to
