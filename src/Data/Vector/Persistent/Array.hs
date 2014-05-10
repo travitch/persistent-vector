@@ -64,7 +64,7 @@ import qualified Data.Traversable as Traversable
 import Control.Applicative (Applicative)
 import Control.DeepSeq
 import Control.Monad.ST hiding (runST)
-import GHC.Exts
+import qualified GHC.Exts as Ext
 import GHC.ST (ST(..))
 import Prelude hiding (filter, foldr, length, map, read)
 import qualified Prelude as P
@@ -91,7 +91,7 @@ if not ((_lhs_) _op_ (_rhs_)) then error ("Data.HashMap.Array." ++ (_func_) ++ "
 #endif
 
 data Array a = Array {
-      unArray :: !(Array# a)
+      unArray :: !(Ext.Array# a)
 #if __GLASGOW_HASKELL__ < 702
     , length :: !Int
 #endif
@@ -126,12 +126,12 @@ arrayCompare a1 a2
 
 #if __GLASGOW_HASKELL__ >= 702
 length :: Array a -> Int
-length ary = I# (sizeofArray# (unArray ary))
+length ary = Ext.I# (Ext.sizeofArray# (unArray ary))
 {-# INLINE length #-}
 #endif
 
 -- | Smart constructor
-array :: Array# a -> Int -> Array a
+array :: Ext.Array# a -> Int -> Array a
 #if __GLASGOW_HASKELL__ >= 702
 array ary _n = Array ary
 #else
@@ -140,7 +140,7 @@ array = Array
 {-# INLINE array #-}
 
 data MArray s a = MArray {
-      unMArray :: !(MutableArray# s a)
+      unMArray :: !(Ext.MutableArray# s a)
 #if __GLASGOW_HASKELL__ < 702
     , lengthM :: !Int
 #endif
@@ -148,12 +148,12 @@ data MArray s a = MArray {
 
 #if __GLASGOW_HASKELL__ >= 702
 lengthM :: MArray s a -> Int
-lengthM mary = I# (sizeofMutableArray# (unMArray mary))
+lengthM mary = Ext.I# (Ext.sizeofMutableArray# (unMArray mary))
 {-# INLINE lengthM #-}
 #endif
 
 -- | Smart constructor
-marray :: MutableArray# s a -> Int -> MArray s a
+marray :: Ext.MutableArray# s a -> Int -> MArray s a
 #if __GLASGOW_HASKELL__ >= 702
 marray mary _n = MArray mary
 #else
@@ -179,10 +179,10 @@ rnfArray ary0 = go ary0 n0 0
 -- state thread, with each element containing the specified initial
 -- value.
 new :: Int -> a -> ST s (MArray s a)
-new n@(I# n#) b =
+new n@(Ext.I# n#) b =
     CHECK_GE("new",n,(0 :: Int))
     ST $ \s ->
-        case newArray# n# b s of
+        case Ext.newArray# n# b s of
             (# s', ary #) -> (# s', marray ary n #)
 {-# INLINE new #-}
 
@@ -212,22 +212,22 @@ pair x y = run $ do
 {-# INLINE pair #-}
 
 read :: MArray s a -> Int -> ST s a
-read ary _i@(I# i#) = ST $ \ s ->
+read ary _i@(Ext.I# i#) = ST $ \ s ->
     CHECK_BOUNDS("read", lengthM ary, _i)
-        readArray# (unMArray ary) i# s
+        Ext.readArray# (unMArray ary) i# s
 {-# INLINE read #-}
 
 write :: MArray s a -> Int -> a -> ST s ()
-write ary _i@(I# i#) b = ST $ \ s ->
+write ary _i@(Ext.I# i#) b = ST $ \ s ->
     CHECK_BOUNDS("write", lengthM ary, _i)
-        case writeArray# (unMArray ary) i# b s of
+        case Ext.writeArray# (unMArray ary) i# b s of
             s' -> (# s' , () #)
 {-# INLINE write #-}
 
 index :: Array a -> Int -> a
-index ary _i@(I# i#) =
+index ary _i@(Ext.I# i#) =
     CHECK_BOUNDS("index", length ary, _i)
-        case indexArray# (unArray ary) i# of (# b #) -> b
+        case Ext.indexArray# (unArray ary) i# of (# b #) -> b
 {-# INLINE index #-}
 
 index# :: Array a -> Int -> (# a #)
@@ -237,26 +237,26 @@ index# ary _i@(I# i#) =
 {-# INLINE index# #-}
 
 index_ :: Array a -> Int -> ST s a
-index_ ary _i@(I# i#) =
+index_ ary _i@(Ext.I# i#) =
     CHECK_BOUNDS("index_", length ary, _i)
-        case indexArray# (unArray ary) i# of (# b #) -> return b
+        case Ext.indexArray# (unArray ary) i# of (# b #) -> return b
 {-# INLINE index_ #-}
 
 indexM_ :: MArray s a -> Int -> ST s a
-indexM_ ary _i@(I# i#) =
+indexM_ ary _i@(Ext.I# i#) =
     CHECK_BOUNDS("index_", lengthM ary, _i)
-        ST $ \ s# -> readArray# (unMArray ary) i# s#
+        ST $ \ s# -> Ext.readArray# (unMArray ary) i# s#
 {-# INLINE indexM_ #-}
 
 unsafeFreeze :: MArray s a -> ST s (Array a)
 unsafeFreeze mary
-    = ST $ \s -> case unsafeFreezeArray# (unMArray mary) s of
+    = ST $ \s -> case Ext.unsafeFreezeArray# (unMArray mary) s of
                    (# s', ary #) -> (# s', array ary (lengthM mary) #)
 {-# INLINE unsafeFreeze #-}
 
 unsafeThaw :: Array a -> ST s (MArray s a)
 unsafeThaw ary
-    = ST $ \s -> case unsafeThawArray# (unArray ary) s of
+    = ST $ \s -> case Ext.unsafeThawArray# (unArray ary) s of
                    (# s', mary #) -> (# s', marray mary (length ary) #)
 {-# INLINE unsafeThaw #-}
 
@@ -273,11 +273,11 @@ run2 k = runST (do
 -- | Unsafely copy the elements of an array. Array bounds are not checked.
 copy :: Array e -> Int -> MArray s e -> Int -> Int -> ST s ()
 #if __GLASGOW_HASKELL__ >= 702
-copy !src !_sidx@(I# sidx#) !dst !_didx@(I# didx#) _n@(I# n#) =
+copy !src !_sidx@(Ext.I# sidx#) !dst !_didx@(Ext.I# didx#) _n@(Ext.I# n#) =
     CHECK_LE("copy", _sidx + _n, length src)
     CHECK_LE("copy", _didx + _n, lengthM dst)
         ST $ \ s# ->
-        case copyArray# (unArray src) sidx# (unMArray dst) didx# n# s# of
+        case Ext.copyArray# (unArray src) sidx# (unMArray dst) didx# n# s# of
             s2 -> (# s2, () #)
 #else
 copy !src !sidx !dst !didx n =
@@ -295,11 +295,11 @@ copy !src !sidx !dst !didx n =
 -- | Unsafely copy the elements of an array. Array bounds are not checked.
 copyM :: MArray s e -> Int -> MArray s e -> Int -> Int -> ST s ()
 #if __GLASGOW_HASKELL__ >= 702
-copyM !src !_sidx@(I# sidx#) !dst !_didx@(I# didx#) _n@(I# n#) =
+copyM !src !_sidx@(Ext.I# sidx#) !dst !_didx@(Ext.I# didx#) _n@(Ext.I# n#) =
     CHECK_BOUNDS("copyM: src", lengthM src, _sidx + _n - 1)
     CHECK_BOUNDS("copyM: dst", lengthM dst, _didx + _n - 1)
     ST $ \ s# ->
-    case copyMutableArray# (unMArray src) sidx# (unMArray dst) didx# n# s# of
+    case Ext.copyMutableArray# (unMArray src) sidx# (unMArray dst) didx# n# s# of
         s2 -> (# s2, () #)
 #else
 copyM !src !sidx !dst !didx n =
@@ -407,9 +407,9 @@ undefinedElem = error "Data.HashMap.Array: Undefined element"
 
 thaw :: Array e -> Int -> Int -> ST s (MArray s e)
 #if __GLASGOW_HASKELL__ >= 702
-thaw !ary !_o@(I# o#) !n@(I# n#) =
+thaw !ary !_o@(Ext.I# o#) !n@(Ext.I# n#) =
     CHECK_LE("thaw", _o + n, length ary)
-        ST $ \ s -> case thawArray# (unArray ary) o# n# s of
+        ST $ \ s -> case Ext.thawArray# (unArray ary) o# n# s of
             (# s2, mary# #) -> (# s2, marray mary# n #)
 #else
 thaw !ary !o !n =
