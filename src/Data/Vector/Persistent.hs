@@ -35,12 +35,14 @@ module Data.Vector.Persistent (
   reverse,
   -- * Searches
   filter,
-  partition
+  partition,
+  takeWhile,
+  dropWhile
   ) where
 
 import Prelude hiding ( null, length, tail, take,
                         drop, map, foldr, reverse,
-                        splitAt, filter
+                        splitAt, filter, takeWhile, dropWhile
                       )
 
 import Control.Applicative hiding ( empty )
@@ -67,11 +69,11 @@ data Vector a = EmptyVector
                          , vecOffset :: {-# UNPACK #-} !Int
                          , vecCapacity :: {-# UNPACK #-} !Int
                          , vecTail :: ![a]
-                         , intVecPtrs :: !(Array (Vector a))
+                         , intVecPtrs :: {-# UNPACK #-} !(Array (Vector a))
                          }
-              | InternalNode { intVecPtrs :: !(Array (Vector a))
+              | InternalNode { intVecPtrs :: {-# UNPACK #-} !(Array (Vector a))
                              }
-              | DataNode { dataVec :: !(Array a)
+              | DataNode { dataVec :: {-# UNPACK #-} !(Array a)
                          }
               deriving (Show)
 
@@ -168,6 +170,9 @@ map f = go
           v' = A.map (fmap f) v
       in RootNode sz sh off cap t' v'
 
+-- | A more strict 3 tuple for the folds
+data FoldInfo a = FI a !Int !Int
+
 {-# INLINABLE foldr #-}
 -- | O(n) Right fold over the vector
 foldr :: (a -> b -> b) -> b -> Vector a -> b
@@ -175,25 +180,25 @@ foldr _ s0 EmptyVector = s0
 foldr f s0 v
   | isNotSliced v = sgo v s0
   | otherwise =
-    case go v (s0, max 0 (vecCapacity v - vecSize v), length v) of (r, _, _) -> r
+    case go v (FI s0 (max 0 (vecCapacity v - vecSize v)) (length v)) of (FI r _ _) -> r
   where
     go EmptyVector seed = seed
-    go (DataNode a) (seed, nskip, len)
-      | len <= 0 = (seed, 0, 0)
-      | nskip == 0 = (A.boundedFoldr f (32 - len) 32 seed a, 0, len - A.length a)
-      | nskip >= 32 = (seed, nskip - 32, len)
+    go (DataNode a) s@(FI seed nskip len)
+      | len <= 0 = s
+      | nskip == 0 = FI (A.boundedFoldr f (32 - len) 32 seed a) 0 (len - A.length a)
+      | nskip >= 32 = FI seed (nskip - 32) len
       | otherwise =
         let end = min (max 0 (32 - nskip)) 32
             start = 32 - (len + nskip)
             taken = end - max 0 start
-        in (A.boundedFoldr f start end seed a, 0, len - taken)
+        in FI (A.boundedFoldr f start end seed a) 0 (len - taken)
     go (InternalNode as) seed =
       A.foldr go seed as
       -- Note: if there is a tail at all, the elements are live (slice
       -- drops unused tail elements)
-    go (RootNode _ _ _ _ t as) (s, nskip, l) =
+    go (RootNode _ _ _ _ t as) (FI s nskip l) =
       let tseed = L.foldl' (flip f) s t
-          seed = (tseed, nskip, l - L.length t)
+          seed = FI tseed nskip (l - L.length t)
       in A.foldr go seed as
 
     -- A simpler variant for unsliced vectors (the common case) that is
@@ -212,23 +217,23 @@ foldl' _ s0 EmptyVector = s0
 foldl' f s0 v
   | isNotSliced v = sgo s0 v
   | otherwise =
-    case go (s0, vecOffset v, length v) v of (r, _, _) -> r
+    case go (FI s0 (vecOffset v) (length v)) v of (FI r _ _) -> r
   where
     go seed EmptyVector = seed
-    go (seed, nskip, len) (DataNode a)
-      | len <= 0 = (seed, 0, 0)
-      | nskip == 0 = (A.boundedFoldl' f 0 (min len 32) seed a, 0, len - A.length a)
-      | nskip >= 32 = (seed, nskip - 32, len)
+    go s@(FI seed nskip len) (DataNode a)
+      | len <= 0 = s
+      | nskip == 0 = FI (A.boundedFoldl' f 0 (min len 32) seed a) 0 (len - A.length a)
+      | nskip >= 32 = FI seed (nskip - 32) len
       | otherwise =
         let end = min 32 (len + nskip)
             start = nskip
             taken = end - max 0 start
-        in (A.boundedFoldl' f start end seed a, 0, len - taken)
+        in FI (A.boundedFoldl' f start end seed a) 0 (len - taken)
     go seed (InternalNode as) =
       A.foldl' go seed as
-    go (s, nskip, l) (RootNode _ _ _ _ t as) =
-      let (rseed, _, _) = A.foldl' go (s, nskip, l - L.length t) as
-      in (L.foldr (flip f) rseed t, 0, 0)
+    go (FI s nskip l) (RootNode _ _ _ _ t as) =
+      let FI rseed _ _ = A.foldl' go (FI s nskip (l - L.length t)) as
+      in FI (L.foldr (flip f) rseed t) 0 0
 
     sgo seed EmptyVector = seed
     sgo seed (DataNode a) = A.foldl' f seed a
@@ -252,7 +257,7 @@ pvTraverse f = go
 append :: Vector a -> Vector a -> Vector a
 append EmptyVector v = v
 append v EmptyVector = v
-append v1 v2 = F.foldl' snoc v1 (F.toList v2)
+append v1 v2 = foldl' snoc v1 v2
 
 {-# INLINABLE pvRnf #-}
 pvRnf :: (NFData a) => Vector a -> ()
@@ -286,10 +291,11 @@ index v ix
 -- usually just return nonsense values.
 unsafeIndex :: Vector a -> Int -> a
 unsafeIndex vec userIndex
---  | tailOffset vec < vecOffset vec = L.reverse (vecTail vec) !! (userIndex .&. 0x1f)
   | ix >= tailOffset vec && vecCapacity vec < vecSize vec =
     L.reverse (vecTail vec) !! (ix .&. 0x1f)
-  | otherwise = go (vecShift vec) vec
+  | otherwise =
+      let sh = vecShift vec
+      in go (sh - 5) (A.index (intVecPtrs vec) (ix `shiftR` sh))
   where
     -- The user is indexing from zero but there could be some masked
     -- portion of the vector due to the offset - we have to correct to
@@ -527,14 +533,41 @@ filter p = foldl' go empty
 
 -- | O(n) Return the elements that do and do not obey the predicate
 partition :: (a -> Bool) -> Vector a -> (Vector a, Vector a)
-partition p = foldl' go (empty, empty)
+partition p = spToPair . foldl' go (SP empty empty)
   where
-    go (atrue, afalse) e =
-      if p e then (snoc atrue e, afalse) else (atrue, snoc afalse e)
+    go (SP atrue afalse) e =
+      if p e then SP (snoc atrue e) afalse else SP atrue (snoc afalse e)
 
 -- | O(n) Construct a vector from a list.
 fromList :: [a] -> Vector a
 fromList = F.foldl' snoc empty
+
+data StrictPair a b = SP !a !b
+
+spSnd :: StrictPair a b -> b
+spSnd (SP _ v) = v
+
+spToPair :: StrictPair a b -> (a, b)
+spToPair (SP a b) = (a, b)
+
+-- | O(n) Apply a predicate @p@ to the vector, returning the longest
+-- prefix of elements that satisfy @p@.
+takeWhile :: (a -> Bool) -> Vector a -> Vector a
+takeWhile p = spSnd . foldl' f (SP True empty)
+  where
+    f (SP True v) e =
+      if p e then SP True (snoc v e)
+      else SP False v
+    f a _ = a
+
+-- | O(n) Returns the longest suffix after @takeWhile p v@.
+dropWhile :: (a -> Bool) -> Vector a -> Vector a
+dropWhile p = spSnd . foldl' f (SP True empty)
+  where
+    f a@(SP True v) e =
+      if p e then a
+      else SP False (snoc v e)
+    f (SP False v) e = SP False (snoc v e)
 
 -- Helpers
 
