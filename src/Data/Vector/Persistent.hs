@@ -244,11 +244,11 @@ foldl' f s0 v
 pvTraverse :: (Ap.Applicative f) => (a -> f b) -> Vector a -> f (Vector b)
 pvTraverse f = go
   where
-    go EmptyVector = pure EmptyVector
-    go (DataNode a) = DataNode <$> A.traverseArray f a
-    go (InternalNode as) = InternalNode <$> A.traverseArray go as
+    go EmptyVector = Ap.pure EmptyVector
+    go (DataNode a) = DataNode Ap.<$> A.traverseArray f a
+    go (InternalNode as) = InternalNode Ap.<$> A.traverseArray go as
     go (RootNode sz sh off cap t as) =
-      RootNode sz sh off cap <$> T.traverse f t <*> A.traverseArray go as
+      RootNode sz sh off cap Ap.<$> T.traverse f t Ap.<*> A.traverseArray go as
 
 {-# INLINABLE append #-}
 append :: Vector a -> Vector a -> Vector a
