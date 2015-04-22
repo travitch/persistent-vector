@@ -45,15 +45,12 @@ import Prelude hiding ( null, length, tail, take,
                         splitAt, filter, takeWhile, dropWhile
                       )
 
-import Control.Applicative hiding ( empty )
+import qualified Control.Applicative as Ap
 import Control.DeepSeq
 import Data.Bits
-import Data.Foldable ( Foldable )
 import qualified Data.Foldable as F
 import qualified Data.List as L
-import Data.Monoid ( Monoid )
 import qualified Data.Monoid as M
-import Data.Traversable ( Traversable )
 import qualified Data.Traversable as T
 
 import Data.Vector.Persistent.Array ( Array )
@@ -83,17 +80,17 @@ instance (Eq a) => Eq (Vector a) where
 instance (Ord a) => Ord (Vector a) where
   compare = pvCompare
 
-instance Foldable Vector where
+instance F.Foldable Vector where
   foldr = foldr
 
 instance Functor Vector where
   fmap = map
 
-instance Monoid (Vector a) where
+instance M.Monoid (Vector a) where
   mempty = empty
   mappend = append
 
-instance Traversable Vector where
+instance T.Traversable Vector where
   traverse = pvTraverse
 
 instance (NFData a) => NFData (Vector a) where
@@ -244,14 +241,14 @@ foldl' f s0 v
       in F.foldr (flip f) rseed t
 
 {-# INLINABLE pvTraverse #-}
-pvTraverse :: (Applicative f) => (a -> f b) -> Vector a -> f (Vector b)
+pvTraverse :: (Ap.Applicative f) => (a -> f b) -> Vector a -> f (Vector b)
 pvTraverse f = go
   where
     go EmptyVector = pure EmptyVector
-    go (DataNode a) = DataNode <$> A.traverse f a
-    go (InternalNode as) = InternalNode <$> A.traverse go as
+    go (DataNode a) = DataNode <$> A.traverseArray f a
+    go (InternalNode as) = InternalNode <$> A.traverseArray go as
     go (RootNode sz sh off cap t as) =
-      RootNode sz sh off cap <$> T.traverse f t <*> A.traverse go as
+      RootNode sz sh off cap <$> T.traverse f t <*> A.traverseArray go as
 
 {-# INLINABLE append #-}
 append :: Vector a -> Vector a -> Vector a

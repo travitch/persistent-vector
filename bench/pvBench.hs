@@ -1,6 +1,5 @@
 module Main ( main ) where
 
-import Criterion.Config
 import Criterion.Main
 
 import Control.DeepSeq
@@ -88,7 +87,7 @@ testVecBuild :: Int -> Vector Int
 testVecBuild len = L.foldl' V.snoc V.empty [0..len]
 
 main :: IO ()
-main = defaultMainWith defaultConfig setup [
+main = setup >> defaultMain [
   bgroup "traverse1000" [ bench "ListR1000" $ whnf testListRTraversal l1000
                         , bench "IMR1000" $ whnf testIMRTraversal im1000
                         , bench "SeqR1000" $ whnf testSeqRTraversal s1000

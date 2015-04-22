@@ -52,14 +52,14 @@ module Data.Vector.Persistent.Array
     , thaw
     , map
     , map'
-    , traverse
+    , traverseArray
     , filter
     , fromList
     , toList
     ) where
 
 import qualified Data.Traversable as Traversable
-import Control.Applicative (Applicative)
+import qualified Control.Applicative as A
 import Control.DeepSeq
 import Control.Monad.ST hiding (runST)
 import qualified GHC.Exts as Ext
@@ -461,10 +461,10 @@ fromList n xs0 = run $ do
 toList :: Array a -> [a]
 toList = foldr (:) []
 
-traverse :: Applicative f => (a -> f b) -> Array a -> f (Array b)
-traverse f = \ ary -> fromList (length ary) `fmap`
+traverseArray :: A.Applicative f => (a -> f b) -> Array a -> f (Array b)
+traverseArray f = \ ary -> fromList (length ary) `fmap`
                       Traversable.traverse f (toList ary)
-{-# INLINE traverse #-}
+{-# INLINE traverseArray #-}
 
 filter :: (a -> Bool) -> Array a -> Array a
 filter p = \ ary ->
