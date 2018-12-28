@@ -72,4 +72,4 @@ prop_indexingWorks (IndexableList il ix) =
 
 prop_mappendWorks :: (InputList, InputList) -> Bool
 prop_mappendWorks (InputList il1, InputList il2) =
-  (il1 `mappend` il2) == F.toList (V.fromList il1 `mappend` V.fromList il2)
+  (il1 `mappend` il2) == F.toList (V.fromList il1 <> V.fromList il2)

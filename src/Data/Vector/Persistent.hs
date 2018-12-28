@@ -50,7 +50,7 @@ import Control.DeepSeq
 import Data.Bits
 import qualified Data.Foldable as F
 import qualified Data.List as L
-import qualified Data.Monoid as M
+import Data.Semigroup as Sem
 import qualified Data.Traversable as T
 
 import Data.Vector.Persistent.Array ( Array )
@@ -84,9 +84,13 @@ instance F.Foldable Vector where
 instance Functor Vector where
   fmap = map
 
-instance M.Monoid (Vector a) where
+instance Sem.Semigroup (Vector a) where
+  (<>) = append
+
+instance Monoid (Vector a) where
   mempty = empty
-  mappend = append
+  -- Defined for compatibility with ghc 8.2
+  mappend = (<>)
 
 instance T.Traversable Vector where
   traverse = pvTraverse
