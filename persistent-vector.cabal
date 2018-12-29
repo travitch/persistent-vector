@@ -69,7 +69,7 @@ benchmark pvBench
   build-depends: persistent-vector,
                  base == 4.*,
                  containers,
-                 criterion >= 1 && < 1.2,
+                 criterion >= 1 && < 1.6,
                  deepseq
 
 source-repository head
