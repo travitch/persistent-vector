@@ -1,3 +1,5 @@
+{- OPTIONS_GHC -Wall #-}
+
 -- | This is a port of the persistent vector from clojure to Haskell.
 -- It is spine-strict and lazy in the elements.
 --
@@ -60,25 +62,38 @@ import qualified Data.Vector.Persistent.Array as A
 -- bit machine (it is fine on 64)
 
 -- | Persistent vectors based on array mapped tries
-data Vector a = EmptyVector
-              | RootNode { vecSize :: {-# UNPACK #-} !Int
-                         , vecShift :: {-# UNPACK #-} !Int
-                         , vecOffset :: {-# UNPACK #-} !Int
-                         , vecCapacity :: {-# UNPACK #-} !Int
-                         , vecTail :: ![a]
-                         , intVecPtrs :: {-# UNPACK #-} !(Array (Vector a))
-                         }
-              | InternalNode { intVecPtrs :: {-# UNPACK #-} !(Array (Vector a))
-                             }
-              | DataNode { dataVec :: {-# UNPACK #-} !(Array a)
-                         }
-              deriving (Show)
+data Vector a
+  = EmptyVector
+  | RootNode
+     { vecSize :: {-# UNPACK #-} !Int
+     , vecShift :: {-# UNPACK #-} !Int
+     , vecOffset :: {-# UNPACK #-} !Int
+     , vecCapacity :: {-# UNPACK #-} !Int
+     , vecTail :: ![a]
+     , intVecPtrs :: {-# UNPACK #-} !(Array (Vector_ a))
+     }
+  deriving (Show)
 
-instance (Eq a) => Eq (Vector a) where
+data Vector_ a
+  = InternalNode
+      { intVecPtrs_ :: {-# UNPACK #-} !(Array (Vector_ a))
+      }
+  | DataNode
+      { dataVec :: {-# UNPACK #-} !(Array a)
+      }
+  deriving (Show)
+
+instance Eq a => Eq (Vector a) where
   (==) = pvEq
 
-instance (Ord a) => Ord (Vector a) where
+instance Eq a => Eq (Vector_ a) where
+  (==) = pvEq_
+
+instance Ord a => Ord (Vector a) where
   compare = pvCompare
+
+instance Ord a => Ord (Vector_ a) where
+  compare = pvCompare_
 
 instance F.Foldable Vector where
   foldr = foldr
@@ -105,58 +120,54 @@ instance (NFData a) => NFData (Vector a) where
 -- extremely cheap.  There is another optimized check for the case
 -- where neither input is sliced.  For sliced inputs, we currently
 -- fall back to a list conversion.
-pvEq :: (Eq a) => Vector a -> Vector a -> Bool
+pvEq :: Eq a => Vector a -> Vector a -> Bool
 pvEq EmptyVector EmptyVector = True
 pvEq v1@RootNode { } v2@RootNode { }
   | length v1 /= length v2 = False
   | isNotSliced v1 && isNotSliced v2 = pvSimpleEq v1 v2
   | otherwise = F.toList v1 == F.toList v2
-pvEq (DataNode a1) (DataNode a2) = a1 == a2
-pvEq (InternalNode a1) (InternalNode a2) = a1 == a2
 pvEq _ _ = False
+
+{-# INLINABLE pvEq_ #-}
+pvEq_ :: Eq a => Vector_ a -> Vector_ a -> Bool
+pvEq_ (DataNode a1) (DataNode a2) = a1 == a2
+pvEq_ (InternalNode a1) (InternalNode a2) = a1 == a2
+pvEq_ _ _ = False
 
 -- | A simple equality implementation for unsliced vectors.  This can
 -- proceed structurally.
-pvSimpleEq :: (Eq a) => Vector a -> Vector a -> Bool
+pvSimpleEq :: Eq a => Vector a -> Vector a -> Bool
 pvSimpleEq EmptyVector EmptyVector = True
 pvSimpleEq (RootNode sz1 sh1 _ _ t1 v1) (RootNode sz2 sh2 _ _ t2 v2) =
   sz1 == sz2 && sh1 == sh2 && t1 == t2 && v1 == v2
-pvSimpleEq (DataNode a1) (DataNode a2) = a1 == a2
-pvSimpleEq (InternalNode a1) (InternalNode a2) = a1 == a2
 pvSimpleEq _ _ = False
 
 {-# INLINABLE pvCompare #-}
 -- | A dispatcher for comparison tests
-pvCompare :: (Ord a) => Vector a -> Vector a -> Ordering
+pvCompare :: Ord a => Vector a -> Vector a -> Ordering
 pvCompare EmptyVector EmptyVector = EQ
-pvCompare (DataNode a1) (DataNode a2) = compare a1 a2
-pvCompare (InternalNode a1) (InternalNode a2) = compare a1 a2
 pvCompare v1@RootNode { vecSize = s1 } v2@RootNode { vecSize = s2 }
   | s1 /= s2 = compare s1 s2
   | isNotSliced v1 && isNotSliced v2 = pvSimpleCompare v1 v2
   | otherwise = compare (F.toList v1) (F.toList v2)
 pvCompare EmptyVector _ = LT
 pvCompare _ EmptyVector = GT
-pvCompare (DataNode _) (InternalNode _) = LT
-pvCompare (InternalNode _) (DataNode _) = GT
-pvCompare _ _ = error "Data.Vector.Persistent: unexpected root node"
 
+{-# INLINABLE pvCompare_ #-}
+pvCompare_ :: Ord a => Vector_ a -> Vector_ a -> Ordering
+pvCompare_ (DataNode a1) (DataNode a2) = compare a1 a2
+pvCompare_ (InternalNode a1) (InternalNode a2) = compare a1 a2
+pvCompare_ (DataNode _) (InternalNode _) = LT
+pvCompare_ (InternalNode _) (DataNode _) = GT
 
-
-pvSimpleCompare :: (Ord a) => Vector a -> Vector a -> Ordering
+pvSimpleCompare :: Ord a => Vector a -> Vector a -> Ordering
 pvSimpleCompare EmptyVector EmptyVector = EQ
 pvSimpleCompare (RootNode _ _ _ _ t1 v1) (RootNode _ _ _ _ t2 v2) =
   case compare v1 v2 of
     EQ -> compare t1 t2
     o -> o
-pvSimpleCompare (DataNode a1) (DataNode a2) = compare a1 a2
-pvSimpleCompare (InternalNode a1) (InternalNode a2) = compare a1 a2
 pvSimpleCompare EmptyVector _ = LT
 pvSimpleCompare _ EmptyVector = GT
-pvSimpleCompare (InternalNode _) (DataNode _) = GT
-pvSimpleCompare (DataNode _) (InternalNode _) = LT
-pvSimpleCompare _ _ = error "Data.Vector.Persistent.pvSimpleCompare: Unexpected mismatch"
-
 
 {-# INLINABLE map #-}
 -- | O(n) Map over the vector
@@ -164,12 +175,13 @@ map :: (a -> b) -> Vector a -> Vector b
 map f = go
   where
     go EmptyVector = EmptyVector
-    go (DataNode v) = DataNode (A.map f v)
-    go (InternalNode v) = InternalNode (A.map (fmap f) v)
     go (RootNode sz sh off cap t v) =
       let t' = L.map f t
-          v' = A.map (fmap f) v
+          v' = A.map go_ v
       in RootNode sz sh off cap t' v'
+
+    go_ (DataNode v) = DataNode (A.map f v)
+    go_ (InternalNode v) = InternalNode (A.map go_ v)
 
 -- | A more strict 3 tuple for the folds
 data FoldInfo a = FI a !Int !Int
@@ -184,7 +196,14 @@ foldr f s0 v
     case go v (FI s0 (max 0 (vecCapacity v - vecSize v)) (length v)) of (FI r _ _) -> r
   where
     go EmptyVector seed = seed
-    go (DataNode a) s@(FI seed nskip len)
+      -- Note: if there is a tail at all, the elements are live (slice
+      -- drops unused tail elements)
+    go (RootNode _ _ _ _ t as) (FI s nskip l) =
+      let tseed = L.foldl' (flip f) s t
+          seed = FI tseed nskip (l - L.length t)
+      in A.foldr go_ seed as
+
+    go_ (DataNode a) s@(FI seed nskip len)
       | len <= 0 = s
       | nskip == 0 = FI (A.boundedFoldr f (32 - len) 32 seed a) 0 (len - A.length a)
       | nskip >= 32 = FI seed (nskip - 32) len
@@ -193,23 +212,18 @@ foldr f s0 v
             start = 32 - (len + nskip)
             taken = end - max 0 start
         in FI (A.boundedFoldr f start end seed a) 0 (len - taken)
-    go (InternalNode as) seed =
-      A.foldr go seed as
-      -- Note: if there is a tail at all, the elements are live (slice
-      -- drops unused tail elements)
-    go (RootNode _ _ _ _ t as) (FI s nskip l) =
-      let tseed = L.foldl' (flip f) s t
-          seed = FI tseed nskip (l - L.length t)
-      in A.foldr go seed as
+    go_ (InternalNode as) seed =
+      A.foldr go_ seed as
 
     -- A simpler variant for unsliced vectors (the common case) that is
     -- significantly more efficient
     sgo EmptyVector seed = seed
-    sgo (DataNode a) seed = A.foldr f seed a
-    sgo (InternalNode as) seed = A.foldr sgo seed as
     sgo (RootNode _ _ _ _ t as) seed =
       let tseed = L.foldl' (flip f) seed t
-      in A.foldr sgo tseed as
+      in A.foldr sgo_ tseed as
+
+    sgo_ (DataNode a) seed = A.foldr f seed a
+    sgo_ (InternalNode as) seed = A.foldr sgo_ seed as
 
 {-# INLINABLE foldl' #-}
 -- | O(n) Strict left fold over the vector
@@ -221,7 +235,11 @@ foldl' f s0 v
     case go (FI s0 (vecOffset v) (length v)) v of (FI r _ _) -> r
   where
     go seed EmptyVector = seed
-    go s@(FI seed nskip len) (DataNode a)
+    go (FI s nskip l) (RootNode _ _ _ _ t as) =
+      let FI rseed _ _ = A.foldl' go_ (FI s nskip (l - L.length t)) as
+      in FI (L.foldr (flip f) rseed t) 0 0
+
+    go_ s@(FI seed nskip len) (DataNode a)
       | len <= 0 = s
       | nskip == 0 = FI (A.boundedFoldl' f 0 (min len 32) seed a) 0 (len - A.length a)
       | nskip >= 32 = FI seed (nskip - 32) len
@@ -230,29 +248,28 @@ foldl' f s0 v
             start = nskip
             taken = end - max 0 start
         in FI (A.boundedFoldl' f start end seed a) 0 (len - taken)
-    go seed (InternalNode as) =
-      A.foldl' go seed as
-    go (FI s nskip l) (RootNode _ _ _ _ t as) =
-      let FI rseed _ _ = A.foldl' go (FI s nskip (l - L.length t)) as
-      in FI (L.foldr (flip f) rseed t) 0 0
+    go_ seed (InternalNode as) =
+      A.foldl' go_ seed as
 
     sgo seed EmptyVector = seed
-    sgo seed (DataNode a) = A.foldl' f seed a
-    sgo seed (InternalNode as) =
-      A.foldl' sgo seed as
     sgo seed (RootNode _ _ _ _ t as) =
-      let rseed = A.foldl' sgo seed as
+      let rseed = A.foldl' sgo_ seed as
       in F.foldr (flip f) rseed t
 
+    sgo_ seed (DataNode a) = A.foldl' f seed a
+    sgo_ seed (InternalNode as) =
+      A.foldl' sgo_ seed as
+
 {-# INLINABLE pvTraverse #-}
-pvTraverse :: (Ap.Applicative f) => (a -> f b) -> Vector a -> f (Vector b)
+pvTraverse :: Ap.Applicative f => (a -> f b) -> Vector a -> f (Vector b)
 pvTraverse f = go
   where
     go EmptyVector = Ap.pure EmptyVector
-    go (DataNode a) = DataNode Ap.<$> A.traverseArray f a
-    go (InternalNode as) = InternalNode Ap.<$> A.traverseArray go as
     go (RootNode sz sh off cap t as) =
-      RootNode sz sh off cap Ap.<$> T.traverse f t Ap.<*> A.traverseArray go as
+      RootNode sz sh off cap Ap.<$> T.traverse f t Ap.<*> A.traverseArray go_ as
+
+    go_ (DataNode a) = DataNode Ap.<$> A.traverseArray f a
+    go_ (InternalNode as) = InternalNode Ap.<$> A.traverseArray go_ as
 
 {-# INLINABLE append #-}
 append :: Vector a -> Vector a -> Vector a
@@ -277,8 +294,6 @@ null _ = False
 length :: Vector a -> Int
 length EmptyVector = 0
 length RootNode { vecSize = s, vecOffset = off } = s - off
-length InternalNode {} = error "Data.Vector.Persistent.length: Internal nodes should not be exposed"
-length DataNode {} = error "Data.Vector.Persistent.length: Data nodes should not be exposed"
 
 -- | O(1) Bounds-checked indexing into a vector.
 index :: Vector a -> Int -> Maybe a
@@ -306,7 +321,7 @@ unsafeIndex vec userIndex
       | level == 0 = A.index (dataVec v) (ix .&. 0x1f)
       | otherwise =
         let nextVecIx = (ix `shiftR` level) .&. 0x1f
-            v' = intVecPtrs v
+            v' = intVecPtrs_ v
         in go (level - 5) (A.index v' nextVecIx)
 
 -- | O(1) Construct a vector with a single element.
@@ -360,18 +375,18 @@ snoc v@RootNode { vecSize = sz, vecShift = sh, vecOffset = off, vecTail = t } el
                , vecTail = [elt]
                , intVecPtrs = pushTail sz t sh (intVecPtrs v)
                }
-snoc _ _ = error "Data.Vector.Persistent.snoc: Internal nodes should not be exposed to the user"
+
 
 -- | A recursive helper for 'snoc'.  This finds the place to add new
 -- elements.
-pushTail :: Int -> [a] -> Int -> Array (Vector a) -> Array (Vector a)
+pushTail :: Int -> [a] -> Int -> Array (Vector_ a) -> Array (Vector_ a)
 pushTail cnt t = go
   where
     go level parent
       | level == 5 = arraySnoc parent (DataNode (A.fromList 32 (L.reverse t)))
       | subIdx < A.length parent =
         let nextVec = A.index parent subIdx
-            toInsert = go (level - 5) (intVecPtrs nextVec)
+            toInsert = go (level - 5) (intVecPtrs_ nextVec)
         in A.update parent subIdx (InternalNode toInsert)
       | otherwise = arraySnoc parent (newPath (level - 5) t)
       where
@@ -379,7 +394,7 @@ pushTail cnt t = go
 
 -- | The other recursive helper for 'snoc'.  This one builds out a
 -- sub-tree to the current depth.
-newPath :: Int -> [a] -> Vector a
+newPath :: Int -> [a] -> Vector_ a
 newPath level t
   | level == 0 = DataNode (A.fromList 32 (L.reverse t))
   | otherwise = InternalNode $ A.fromList 1 $ [newPath (level - 5) t]
@@ -430,12 +445,11 @@ replaceElement (userIndex, elt) v@(RootNode { vecSize = sz, vecShift = sh, vecTa
       -- In the tree, find the appropriate sub-array, call
       -- recursively, and re-allocate current array
       | otherwise =
-          let rnode = go (level - 5) (intVecPtrs vec')
+          let rnode = go (level - 5) (intVecPtrs_ vec')
           in A.update vec vix (InternalNode rnode)
       where
         vix = (ix `shiftR` level) .&. 0x1f
         vec' = A.index vec vix
-replaceElement _ _ = error "Data.Vector.Persistent.replaceElement: should not see internal nodes"
 
 -- | O(1) Return a slice of @v@ of length @length@ starting at index
 -- @start@.  The returned vector may have fewer than @length@ elements
@@ -487,7 +501,6 @@ slice start userLen v@RootNode { vecSize = sz, vecOffset = off, vecCapacity = ca
   where
     toff = tailOffset v
     len = max 0 (min userLen (sz - start))
-slice _ _ _ = error "Data.Vector.Persistent.slice: Internal node"
 
 -- Note that slice removes unneeded elements from the tail so that
 -- snoc can mostly work unchanged.  snoc does need to change if the
