@@ -49,7 +49,6 @@ jobs:
 
     - name: Build
       run: |
-        cp cabal.project.dist cabal.project
         cabal v2-configure pkg:persistent-vector --enable-tests
         cabal v2-build pkg:persistent-vector
         cabal v2-test pkg:persistent-vector
