@@ -22,6 +22,9 @@
 --   offset cheaply.  It can also make a variant of pushTail
 --   (pushHead) that allocates fragments of preceeding sub-trees.
 --   Each cons call will modify the offset of its result vector.
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE UnboxedTuples #-}
+{-# LANGUAGE BangPatterns #-}
 module Data.Vector.Persistent (
   Vector,
   empty,
@@ -167,18 +170,31 @@ index v ix
   | length v > ix = Just $ unsafeIndex v ix
   | otherwise = Nothing
 
+(!!#) :: [a] -> Int -> (# a #)
+(!!#) [] !_ = error "(!!#): index out of range"
+(!!#) (x : xs) i
+  | i == 0 = (# x #)
+  | otherwise = xs !!# (i - 1)
+
+infixl 9 !!#
+
+unsafeIndex :: Vector a -> Int -> a
+unsafeIndex vec ix
+  | (# a #) <- unsafeIndex# vec ix
+  = a
+
 -- | Unchecked indexing into a vector. (O(1))
 --
 -- Note that out-of-bounds indexing might not even crash - it will
 -- usually just return nonsense values.
-unsafeIndex :: Vector a -> Int -> a
-unsafeIndex vec ix
+unsafeIndex# :: Vector a -> Int -> (# a #)
+unsafeIndex# vec ix
   | ix >= tailOffset vec =
-    vecTail vec !! (ix .&. 0x1f)
+    reverse (vecTail vec) !!# (ix .&. 0x1f)
   | otherwise = go (vecShift vec) vec
   where
     go level v
-      | level == 0 = A.index (dataVec v) (ix .&. 0x1f)
+      | level == 0 = A.index# (dataVec v) (ix .&. 0x1f)
       | otherwise =
         let nextVecIx = (ix `shiftR` level) .&. 0x1f
             v' = intVecPtrs v

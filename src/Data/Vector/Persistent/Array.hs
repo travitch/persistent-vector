@@ -21,6 +21,7 @@ module Data.Vector.Persistent.Array
     , read
     , write
     , index
+    , index#
     , index_
     , indexM_
     , update
@@ -41,7 +42,9 @@ module Data.Vector.Persistent.Array
 
       -- * Folds
     , foldl'
+    , boundedFoldl'
     , foldr
+    , boundedFoldr
 
     , thaw
     , map
@@ -99,8 +102,8 @@ instance Ord a => Ord (Array a) where
 
 arrayEq :: (Eq a) => Array a -> Array a -> Bool
 arrayEq a1 a2
-  | length a1 == length a2 = False
-  | otherwise = P.foldr (\i a -> a && index a1 i == index a2 i) True [0..(length a1)]
+  | length a1 /= length a2 = False
+  | otherwise = P.foldr (\i a -> a && index a1 i == index a2 i) True [0..(length a1 - 1)]
 
 arrayCompare :: (Ord a) => Array a -> Array a -> Ordering
 arrayCompare a1 a2
@@ -213,6 +216,12 @@ index ary _i@(I# i#) =
     CHECK_BOUNDS("index", length ary, _i)
         case indexArray# (unArray ary) i# of (# b #) -> b
 {-# INLINE index #-}
+
+index# :: Array a -> Int -> (# a #)
+index# ary _i@(I# i#) =
+    CHECK_BOUNDS("index", length ary, _i)
+        indexArray# (unArray ary) i#
+{-# INLINE index# #-}
 
 index_ :: Array a -> Int -> ST s a
 index_ ary _i@(I# i#) =
@@ -352,6 +361,15 @@ foldl' f z0 ary0 = go ary0 (length ary0) 0 z0
         | otherwise = go ary n (i+1) (f z (index ary i))
 {-# INLINE foldl' #-}
 
+boundedFoldl' :: (b -> a -> b) -> Int -> Int -> b -> Array a -> b
+boundedFoldl' f start end z0 ary0 =
+  go ary0 (min end (length ary0)) (max 0 start) z0
+  where
+    go ary n i !z
+      | i >= n = z
+      | otherwise = go ary n (i+1) (f z (index ary i))
+{-# INLINE boundedFoldl' #-}
+
 foldr :: (a -> b -> b) -> b -> Array a -> b
 foldr f z0 ary0 = go ary0 (length ary0) 0 z0
 -- foldr f = \ z0 ary0 -> go ary0 (length ary0) 0 z0
@@ -360,6 +378,15 @@ foldr f z0 ary0 = go ary0 (length ary0) 0 z0
         | i >= n    = z
         | otherwise = f (index ary i) (go ary n (i+1) z)
 {-# INLINE foldr #-}
+
+boundedFoldr :: (a -> b -> b) -> Int -> Int -> b -> Array a -> b
+boundedFoldr f start end z0 ary0 =
+  go ary0 (min end (length ary0)) (max 0 start) z0
+  where
+    go ary n i z
+      | i >= n = z
+      | otherwise = f (index ary i) (go ary n (i+1) z)
+{-# INLINE boundedFoldr #-}
 
 undefinedElem :: a
 undefinedElem = error "Data.HashMap.Array: Undefined element"
