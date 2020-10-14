@@ -58,6 +58,7 @@ module Data.Vector.Persistent.Array
     , traverseArray
     , filter
     , fromList
+    , fromListRev
     , toList
     ) where
 
@@ -485,8 +486,17 @@ fromList n xs0 = run $ do
     go xs0 mary 0
   where
     go [] !mary !_   = return mary
-    go (x:xs) mary i = do write mary i x
-                          go xs mary (i+1)
+    go (x:xs) !mary !i = do write mary i x
+                            go xs mary (i+1)
+
+fromListRev :: Int -> [a] -> Array a
+fromListRev n xs0 = run $ do
+    mary <- new_ n
+    go xs0 mary (n - 1)
+  where
+    go [] !mary !_   = return mary
+    go (x:xs) !mary !i = do write mary i x
+                            go xs mary (i-1)
 
 toList :: Array a -> [a]
 toList = foldr (:) []

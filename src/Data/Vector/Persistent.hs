@@ -300,7 +300,7 @@ pushTail :: Int -> [a] -> Int -> Array (Vector a) -> Array (Vector a)
 pushTail cnt t = go
   where
     go level parent
-      | level == 5 = arraySnoc parent (DataNode (A.fromList 32 (L.reverse t)))
+      | level == 5 = arraySnoc parent (DataNode (A.fromListRev 32 t))
       | subIdx < A.length parent =
         let nextVec = A.index parent subIdx
             toInsert = go (level - 5) (intVecPtrs nextVec)
@@ -313,7 +313,7 @@ pushTail cnt t = go
 -- sub-tree to the current depth.
 newPath :: Int -> [a] -> Vector a
 newPath level t
-  | level == 0 = DataNode (A.fromList 32 (L.reverse t))
+  | level == 0 = DataNode (A.fromListRev 32 t)
   | otherwise = InternalNode $ A.fromList 1 $ [newPath (level - 5) t]
 
 -- | \( O(1) \) Update a single element at @ix@ with new value @elt@ in @v@. (O(1))
@@ -375,14 +375,12 @@ reverse = fromList . F.foldl' (flip (:)) []
 
 -- | O(n) Filter according to the predicate
 filter :: (a -> Bool) -> Vector a -> Vector a
--- TODO: Should we use foldr' instead?
 filter p = F.foldl' go empty
   where
     go acc e = if p e then snoc acc e else acc
 
 -- | \( O(n) \) Return the elements that do and do not obey the predicate
 partition :: (a -> Bool) -> Vector a -> (Vector a, Vector a)
--- TODO: Should we use foldr' instead?
 partition p v0 = case F.foldl' go (TwoVec empty empty) v0 of
   TwoVec v1 v2 -> (v1, v2)
   where
