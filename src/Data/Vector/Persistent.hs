@@ -362,6 +362,7 @@ replaceElement (ix, elt) v@(RootNode { vecSize = sz, vecShift = sh, vecTail = t 
 replaceElement _ _ = error "Data.Vector.Persistent.replaceElement: should not see internal nodes"
 
 tailOffset :: Vector a -> Int
+tailOffset EmptyVector = 0
 tailOffset v
   | len < 32 = 0
   | otherwise = (len - 1) `shiftR` 5 `shiftL` 5
