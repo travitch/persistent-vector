@@ -25,9 +25,11 @@ inputList sz = do
 
 tests :: [Test]
 tests = [ testProperty "toListFromListIdent" prop_toListFromListIdentity
+        , testProperty "fmap" prop_map
         , testProperty "foldrWorks" prop_foldrWorks
         , testProperty "foldlWorks" prop_foldlWorks
         , testProperty "updateWorks" prop_updateWorks
+        , testProperty "indexingWorks" prop_indexingWorks
         , testProperty "mappendWorks" prop_mappendWorks
         ]
 
@@ -38,13 +40,19 @@ prop_toListFromListIdentity :: InputList -> Bool
 prop_toListFromListIdentity (InputList il) =
   il == F.toList (V.fromList il)
 
+prop_map :: InputList -> Bool
+prop_map (InputList il) =
+  L.map f il == F.toList (fmap f (V.fromList il))
+  where
+    f = (+20)
+
 prop_foldrWorks :: InputList -> Bool
 prop_foldrWorks (InputList il) =
   F.foldr (+) 0 il == F.foldr (+) 0 (V.fromList il)
 
 prop_foldlWorks :: InputList -> Bool
 prop_foldlWorks (InputList il) =
-  F.foldl' (flip (:)) [] il == F.foldl (flip (:)) [] (V.fromList il)
+  F.foldl (flip (:)) [] il == F.foldl (flip (:)) [] (V.fromList il)
 
 prop_updateWorks :: (InputList, Int, Int) -> Property
 prop_updateWorks (InputList il, ix, repl) =
@@ -57,6 +65,10 @@ prop_updateWorks (InputList il, ix, repl) =
       False -> case ix >= length il of
         True -> il
         False -> keepHead ++ (repl : keepTail)
+
+prop_indexingWorks :: IndexableList -> Bool
+prop_indexingWorks (IndexableList il ix) =
+  (il !! ix) == (V.unsafeIndex (V.fromList il) ix)
 
 prop_mappendWorks :: (InputList, InputList) -> Bool
 prop_mappendWorks (InputList il1, InputList il2) =

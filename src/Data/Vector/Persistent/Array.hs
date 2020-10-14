@@ -11,6 +11,7 @@ module Data.Vector.Persistent.Array
       -- * Creation
     , new
     , new_
+    , empty
     , singleton
     , singleton'
     , pair
@@ -76,6 +77,7 @@ if (_k_) < 0 || (_k_) >= (_len_) then error ("Data.HashMap.Array." ++ (_func_) +
 # define CHECK_OP(_func_,_op_,_lhs_,_rhs_) \
 if not ((_lhs_) _op_ (_rhs_)) then error ("Data.HashMap.Array." ++ (_func_) ++ ": Check failed: _lhs_ _op_ _rhs_ (" ++ show (_lhs_) ++ " vs. " ++ show (_rhs_) ++ ")") else
 # define CHECK_GT(_func_,_lhs_,_rhs_) CHECK_OP(_func_,>,_lhs_,_rhs_)
+# define CHECK_GE(_func_,_lhs_,_rhs_) CHECK_OP(_func_,>=,_lhs_,_rhs_)
 # define CHECK_LE(_func_,_lhs_,_rhs_) CHECK_OP(_func_,<=,_lhs_,_rhs_)
 #else
 # define CHECK_BOUNDS(_func_,_len_,_k_)
@@ -174,7 +176,7 @@ rnfArray ary0 = go ary0 n0 0
 -- value.
 new :: Int -> a -> ST s (MArray s a)
 new n@(I# n#) b =
-    CHECK_GT("new",n,(0 :: Int))
+    CHECK_GE("new",n,(0 :: Int))
     ST $ \s ->
         case newArray# n# b s of
             (# s', ary #) -> (# s', marray ary n #)
@@ -182,6 +184,13 @@ new n@(I# n#) b =
 
 new_ :: Int -> ST s (MArray s a)
 new_ n = new n undefinedElem
+
+-- The globally shared empty array. There's no point
+-- allocating a new empty array every time we need one
+-- when we can just follow a pointer to get one.
+empty :: Array a
+empty = runST (new_ 0 >>= unsafeFreeze)
+{-# NOINLINE empty #-}
 
 singleton :: a -> Array a
 singleton x = runST (singleton' x)

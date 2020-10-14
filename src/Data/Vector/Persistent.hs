@@ -26,20 +26,40 @@
 {-# LANGUAGE BangPatterns #-}
 module Data.Vector.Persistent (
   Vector,
+  -- * Construction
   empty,
+  singleton,
+  snoc,
+  fromList,
+  -- * Queries
   null,
   length,
-  singleton,
+  -- * Indexing
   index,
+  index#,
+  indexA,
   unsafeIndex,
+  unsafeIndexA,
+  unsafeIndex#,
   snoc,
+  -- * Modification
   update,
   (//),
-  -- * Conversion
-  fromList
+  -- * Folds
+  foldr,
+  foldl,
+  -- * Transformations
+  map,
+  reverse,
+  -- * Searches
+  filter,
+  partition
   ) where
 
-import Prelude hiding ( null, length, tail )
+import Prelude hiding
+  ( null, length, tail, take
+  , drop, map, foldr, foldl
+  , reverse, splitAt, filter )
 
 import Control.Applicative hiding ( empty )
 import Control.DeepSeq
@@ -49,7 +69,7 @@ import qualified Data.Foldable as F
 import qualified Data.List as L
 import Data.Monoid ( Monoid )
 import qualified Data.Monoid as M
-import Data.Traversable ( Traversable )
+import Data.Traversable ( Traversable, foldMapDefault )
 import qualified Data.Traversable as T
 
 import Data.Vector.Persistent.Array ( Array )
@@ -67,18 +87,25 @@ data Vector a = EmptyVector
                              }
               | DataNode { dataVec :: !(Array a)
                          }
-              deriving (Eq, Ord, Show)
+              deriving Show
+
+instance Eq a => Eq (Vector a) where
+  (==) = pvEq
+
+instance Ord a => Ord (Vector a) where
+  compare = pvCompare
 
 instance Foldable Vector where
-  foldr = pvFoldr
-  foldl = pvFoldl
+  foldMap = foldMapDefault
+  foldr = foldr
+  foldl = foldl
 
 instance Functor Vector where
-  fmap = pvFmap
+  fmap = map
 
 instance Monoid (Vector a) where
   mempty = empty
-  mappend = pvAppend
+  mappend = append
 
 instance Traversable Vector where
   traverse = pvTraverse
@@ -86,40 +113,64 @@ instance Traversable Vector where
 instance (NFData a) => NFData (Vector a) where
   rnf = pvRnf
 
-{-# INLINABLE pvFmap #-}
-pvFmap :: (a -> b) -> Vector a -> Vector b
-pvFmap f = go
+{-# INLINABLE pvEq #-}
+pvEq :: (Eq a) => Vector a -> Vector a -> Bool
+pvEq EmptyVector EmptyVector = True
+pvEq (RootNode sz1 sh1 t1 v1) (RootNode sz2 sh2 t2 v2) =
+  sz1 == sz2 && sh1 == sh2 && t1 == t2 && v1 == v2
+pvEq (DataNode a1) (DataNode a2) = a1 == a2
+pvEq (InternalNode a1) (InternalNode a2) = a1 == a2
+pvEq _ _ = False
+
+{-# INLINABLE pvCompare #-}
+pvCompare :: Ord a => Vector a -> Vector a -> Ordering
+pvCompare EmptyVector EmptyVector = EQ
+pvCompare (RootNode sz1 _ t1 v1) (RootNode sz2 _ t2 v2) =
+  compare sz1 sz2 <> compare v1 v2 <> compare t1 t2
+pvCompare (DataNode a1) (DataNode a2) = compare a1 a2
+pvCompare (InternalNode a1) (InternalNode a2) = compare a1 a2
+pvCompare EmptyVector _ = LT
+pvCompare _ EmptyVector = GT
+pvCompare (InternalNode _) (DataNode _) = GT
+pvCompare (DataNode _) (InternalNode _) = LT
+pvCompare _ _ = error "Data.Vector.Persistent.pvCompare: Unexpected mismatch"
+
+
+{-# INLINABLE map #-}
+-- | \( O(n) \) Map over the vector
+map :: (a -> b) -> Vector a -> Vector b
+map f = go
   where
     go EmptyVector = EmptyVector
     go (DataNode v) = DataNode (A.map f v)
     go (InternalNode v) = InternalNode (A.map (fmap f) v)
     go (RootNode sz sh t v) =
-      let t' = map f t
+      let t' = L.map f t
           v' = A.map (fmap f) v
       in RootNode sz sh t' v'
 
-{-# INLINABLE pvFoldr #-}
-pvFoldr :: (a -> b -> b) -> b -> Vector a -> b
-pvFoldr f = go
+{-# INLINABLE foldr #-}
+foldr :: (a -> b -> b) -> b -> Vector a -> b
+foldr f = go
   where
     go seed EmptyVector = seed
     go seed (DataNode a) = {-# SCC "gorDataNode" #-} A.foldr f seed a
     go seed (InternalNode as) = {-# SCC "gorInternalNode" #-}
       A.foldr (flip go) seed as
     go seed (RootNode _ _ t as) = {-# SCC "gorRootNode" #-}
-      let tseed = F.foldl' (flip f) seed t
+      let tseed = F.foldl (flip f) seed t
       in A.foldr (flip go) tseed as
 
-{-# INLINABLE pvFoldl #-}
-pvFoldl :: (b -> a -> b) -> b -> Vector a -> b
-pvFoldl f = go
+{-# INLINABLE foldl #-}
+foldl :: (b -> a -> b) -> b -> Vector a -> b
+foldl f = go
   where
     go seed EmptyVector = seed
-    go seed (DataNode a) = {-# SCC "golDataNode" #-} A.foldl' f seed a
+    go seed (DataNode a) = {-# SCC "golDataNode" #-} A.foldl f seed a
     go seed (InternalNode as) =
-      A.foldl' go seed as
+      A.foldl go seed as
     go seed (RootNode _ _ t as) =
-      let rseed = A.foldl' go seed as
+      let rseed = A.foldl go seed as
       in F.foldr (flip f) rseed t
 
 {-# INLINABLE pvTraverse #-}
@@ -132,11 +183,11 @@ pvTraverse f = go
     go (RootNode sz sh t as) =
       RootNode sz sh <$> T.traverse f t <*> A.traverse go as
 
-{-# INLINABLE pvAppend #-}
-pvAppend :: Vector a -> Vector a -> Vector a
-pvAppend EmptyVector v = v
-pvAppend v EmptyVector = v
-pvAppend v1 v2 = F.foldl' snoc v1 (F.toList v2)
+{-# INLINABLE append #-}
+append :: Vector a -> Vector a -> Vector a
+append EmptyVector v = v
+append v EmptyVector = v
+append v1 v2 = F.foldl' snoc v1 (F.toList v2)
 
 {-# INLINABLE pvRnf #-}
 pvRnf :: (NFData a) => Vector a -> ()
@@ -169,18 +220,37 @@ index v ix
   | length v > ix = Just $ unsafeIndex v ix
   | otherwise = Nothing
 
-(!!#) :: [a] -> Int -> (# a #)
-(!!#) [] !_ = error "(!!#): index out of range"
-(!!#) (x : xs) i
-  | i == 0 = (# x #)
-  | otherwise = xs !!# (i - 1)
-
-infixl 9 !!#
+-- Index into a list from the rear.
+--
+-- revIx# [1..3] 0 = (# 3 #)
+-- revIx# [1..3] 1 = (# 2 #)
+-- revIx# [1..3] 2 = (# 1 #)
+--
+-- This is the same as reversing the list and then indexing
+-- into it, but it doesn't need to allocate a reversed copy
+-- of the list.
+--
+-- TODO: produce an error if the index is too large, instead of
+-- just giving a wrong answer. This just requires a custom
+-- version of `drop`.
+revIx# :: [a] -> Int -> (# a #)
+revIx# xs i = go xs (L.drop (i + 1) xs)
+  where
+    go :: [a] -> [b] -> (# a #)
+    go (a : _) [] = (# a #)
+    go (_ : as) (_ : bs) = go as bs
+    go _ _ = error "revIx#: Whoopsy!"
 
 unsafeIndex :: Vector a -> Int -> a
 unsafeIndex vec ix
   | (# a #) <- unsafeIndex# vec ix
   = a
+
+unsafeIndexA :: Applicative f => Vector a -> Int -> f a
+{-# INLINABLE unsafeIndexA #-}
+unsafeIndexA vec ix
+  | (# a #) <- unsafeIndex# vec ix
+  = pure a
 
 -- | Unchecked indexing into a vector. (O(1))
 --
@@ -189,7 +259,7 @@ unsafeIndex vec ix
 unsafeIndex# :: Vector a -> Int -> (# a #)
 unsafeIndex# vec ix
   | ix >= tailOffset vec =
-    reverse (vecTail vec) !!# (ix .&. 0x1f)
+    (vecTail vec) `revIx#` (ix .&. 0x1f)
   | otherwise = go (vecShift vec) vec
   where
     go level v
@@ -205,7 +275,7 @@ singleton elt =
   RootNode { vecSize = 1
            , vecShift = 5
            , vecTail = [elt]
-           , intVecPtrs = A.fromList 0 []
+           , intVecPtrs = A.empty
            }
 
 arraySnoc :: Array a -> a -> Array a
@@ -240,11 +310,13 @@ snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
                }
 snoc _ _ = error "Data.Vector.Persistent.snoc: Internal nodes should not be exposed to the user"
 
+-- | A recursive helper for 'snoc'.  This finds the place to add new
+-- elements.
 pushTail :: Int -> [a] -> Int -> Array (Vector a) -> Array (Vector a)
 pushTail cnt t = go
   where
     go level parent
-      | level == 5 = arraySnoc parent (DataNode (A.fromList 32 (reverse t)))
+      | level == 5 = arraySnoc parent (DataNode (A.fromList 32 (L.reverse t)))
       | subIdx < A.length parent =
         let nextVec = A.index parent subIdx
             toInsert = go (level - 5) (intVecPtrs nextVec)
@@ -253,22 +325,24 @@ pushTail cnt t = go
       where
         subIdx = ((cnt - 1) `shiftR` level) .&. 0x1f
 
+-- | The other recursive helper for 'snoc'.  This one builds out a
+-- sub-tree to the current depth.
 newPath :: Int -> [a] -> Vector a
 newPath level t
-  | level == 0 = DataNode (A.fromList 32 (reverse t))
+  | level == 0 = DataNode (A.fromList 32 (L.reverse t))
   | otherwise = InternalNode $ A.fromList 1 $ [newPath (level - 5) t]
 
--- | Update a single element at @ix@ with new value @elt@ in @v@. (O(1))
+-- | \( O(1) \) Update a single element at @ix@ with new value @elt@ in @v@. (O(1))
 --
 -- > update ix elt v
 update :: Int -> a -> Vector a -> Vector a
 update ix elt = (// [(ix, elt)])
 
--- | Bulk update.
+-- | \( O(n) \) Bulk update.
 --
 -- > v // updates
 --
--- For each (index, element) pair in @updates@, modify @v@ such that
+-- For each @(index, element)@ pair in @updates@, modify @v@ such that
 -- the @index@th position of @v@ is @element@.
 -- Indices in @updates@ that are not in @v@ are ignored
 (//) :: Vector a -> [(Int, a)] -> Vector a
@@ -310,6 +384,23 @@ tailOffset v
   where
     len = length v
 
--- | Construct a vector from a list. (O(n))
+-- | O(n) Reverse a vector
+reverse :: Vector a -> Vector a
+reverse = fromList . foldl' (flip (:)) []
+
+-- | O(n) Filter according to the predicate
+filter :: (a -> Bool) -> Vector a -> Vector a
+filter p = foldl' go empty
+  where
+    go acc e = if p e then snoc acc e else acc
+
+-- | O(n) Return the elements that do and do not obey the predicate
+partition :: (a -> Bool) -> Vector a -> (Vector a, Vector a)
+partition p = foldl' go (empty, empty)
+  where
+    go (atrue, afalse) e =
+      if p e then (snoc atrue e, afalse) else (atrue, snoc afalse e)
+
+-- | \( O(n) \) Construct a vector from a list. (O(n))
 fromList :: [a] -> Vector a
 fromList = F.foldl' snoc empty
