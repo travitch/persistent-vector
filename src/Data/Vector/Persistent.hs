@@ -20,12 +20,9 @@ module Data.Vector.Persistent (
   length,
   -- * Indexing
   index,
-  index#,
-  indexA,
   unsafeIndex,
   unsafeIndexA,
   unsafeIndex#,
-  snoc,
   -- * Modification
   update,
   (//),
@@ -202,7 +199,7 @@ length DataNode {} = error "Data.Vector.Persistent.length: Data nodes should not
 -- | Bounds-checked indexing into a vector. (O(1))
 index :: Vector a -> Int -> Maybe a
 index v ix
-  | length v > ix = Just $ unsafeIndex v ix
+  | length v > ix = unsafeIndexA v ix
   | otherwise = Nothing
 
 -- Index into a list from the rear.
@@ -333,7 +330,7 @@ update ix elt = (// [(ix, elt)])
 -- the @index@th position of @v@ is @element@.
 -- Indices in @updates@ that are not in @v@ are ignored
 (//) :: Vector a -> [(Int, a)] -> Vector a
-(//)  = foldr replaceElement
+(//)  = L.foldr replaceElement
 
 replaceElement :: (Int, a) -> Vector a -> Vector a
 replaceElement _ EmptyVector = EmptyVector
@@ -374,20 +371,25 @@ tailOffset v
 
 -- | O(n) Reverse a vector
 reverse :: Vector a -> Vector a
-reverse = fromList . foldl' (flip (:)) []
+reverse = fromList . F.foldl' (flip (:)) []
 
 -- | O(n) Filter according to the predicate
 filter :: (a -> Bool) -> Vector a -> Vector a
-filter p = foldl' go empty
+-- TODO: Should we use foldr' instead?
+filter p = F.foldl' go empty
   where
     go acc e = if p e then snoc acc e else acc
 
--- | O(n) Return the elements that do and do not obey the predicate
+-- | \( O(n) \) Return the elements that do and do not obey the predicate
 partition :: (a -> Bool) -> Vector a -> (Vector a, Vector a)
-partition p = foldl' go (empty, empty)
+-- TODO: Should we use foldr' instead?
+partition p v0 = case F.foldl' go (TwoVec empty empty) v0 of
+  TwoVec v1 v2 -> (v1, v2)
   where
-    go (atrue, afalse) e =
-      if p e then (snoc atrue e, afalse) else (atrue, snoc afalse e)
+    go (TwoVec atrue afalse) e =
+      if p e then TwoVec (snoc atrue e) afalse else TwoVec atrue (snoc afalse e)
+
+data TwoVec a = TwoVec !(Vector a) !(Vector a)
 
 -- | \( O(n) \) Construct a vector from a list. (O(n))
 fromList :: [a] -> Vector a

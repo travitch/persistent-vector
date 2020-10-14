@@ -7,9 +7,8 @@ import Test.QuickCheck
 import qualified Data.Foldable as F
 import Data.Monoid
 import qualified Data.List as L
-import qualified Data.Traversable as T
 
-import Data.Vector.Persistent ( Vector )
+--import Data.Vector.Persistent ( Vector )
 import qualified Data.Vector.Persistent as V
 
 newtype InputList = InputList [Int]
@@ -17,9 +16,20 @@ newtype InputList = InputList [Int]
 instance Arbitrary InputList where
   arbitrary = sized inputList
 
+data IndexableList = IndexableList [Int] !Int
+  deriving Show
+
+instance Arbitrary IndexableList where
+  arbitrary = sized indexableList
+
+indexableList :: Int -> Gen IndexableList
+indexableList sz = do
+  len <- chooseInt (1, 1 + 100 * sz) -- Tune this
+  IndexableList <$> vector len <*> chooseInt (0, len - 1)
+
 inputList :: Int -> Gen InputList
 inputList sz = do
-  modifier <- choose (0, 1000)
+  modifier <- chooseInt (0, 1000)
   l <- vector (sz * modifier)
   return $ InputList l
 
