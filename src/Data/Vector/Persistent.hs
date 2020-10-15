@@ -8,6 +8,8 @@
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE BangPatterns #-}
+
+{-# OPTIONS_GHC -ddump-simpl #-}
 module Data.Vector.Persistent (
   Vector,
   -- * Construction
@@ -56,8 +58,7 @@ import qualified Data.Vector.Persistent.Array as A
 -- Note: using Int here doesn't give the full range of 32 bits on a 32
 -- bit machine (it is fine on 64)
 data Vector a
-  = EmptyVector
-  | RootNode { vecSize :: !Int
+  = RootNode { vecSize :: !Int
              , vecShift :: !Int
              , vecTail :: ![a]
              , intVecPtrs :: !(Array (Vector_ a))
@@ -110,10 +111,8 @@ instance NFData a => NFData (Vector_ a) where
 
 {-# INLINABLE pvEq #-}
 pvEq :: Eq a => Vector a -> Vector a -> Bool
-pvEq EmptyVector EmptyVector = True
 pvEq (RootNode sz1 sh1 t1 v1) (RootNode sz2 sh2 t2 v2) =
-  sz1 == sz2 && sh1 == sh2 && t1 == t2 && v1 == v2
-pvEq _ _ = False
+  sz1 == sz2 && (sz1 == 0 || (sh1 == sh2 && t1 == t2 && v1 == v2))
 
 {-# INLINABLE pvEq_ #-}
 pvEq_ :: Eq a => Vector_ a -> Vector_ a -> Bool
@@ -123,11 +122,8 @@ pvEq_ _ _ = False
 
 {-# INLINABLE pvCompare #-}
 pvCompare :: Ord a => Vector a -> Vector a -> Ordering
-pvCompare EmptyVector EmptyVector = EQ
 pvCompare (RootNode sz1 _ t1 v1) (RootNode sz2 _ t2 v2) =
-  compare sz1 sz2 <> compare v1 v2 <> compare t1 t2
-pvCompare EmptyVector _ = LT
-pvCompare _ EmptyVector = GT
+  compare sz1 sz2 <> if sz1 == 0 then EQ else compare v1 v2 <> compare t1 t2
 
 {-# INLINABLE pvCompare_ #-}
 pvCompare_ :: Ord a => Vector_ a -> Vector_ a -> Ordering
@@ -142,7 +138,6 @@ pvCompare_ (InternalNode _) (DataNode _) = GT
 map :: (a -> b) -> Vector a -> Vector b
 map f = go
   where
-    go EmptyVector = EmptyVector
     go (RootNode sz sh t v) =
       let t' = L.map f t
           v' = A.map go_ v
@@ -155,7 +150,7 @@ map f = go
 foldr :: (a -> b -> b) -> b -> Vector a -> b
 foldr f = go
   where
-    go seed EmptyVector = seed
+    go seed RootNode{vecSize = 0} = seed
     go seed (RootNode _ _ t as) = {-# SCC "gorRootNode" #-}
       let tseed = F.foldl (flip f) seed t
       in A.foldr go_ tseed as
@@ -167,7 +162,7 @@ foldr f = go
 foldl :: (b -> a -> b) -> b -> Vector a -> b
 foldl f = go
   where
-    go seed EmptyVector = seed
+    go seed RootNode{vecSize = 0} = seed
     go seed (RootNode _ _ t as) =
       let rseed = A.foldl go_ seed as
       in F.foldr (flip f) rseed t
@@ -180,7 +175,7 @@ foldl f = go
 pvTraverse :: Ap.Applicative f => (a -> f b) -> Vector a -> f (Vector b)
 pvTraverse f = go
   where
-    go EmptyVector = Ap.pure EmptyVector
+    go RootNode{vecSize = 0} = Ap.pure empty
     go (RootNode sz sh t as) =
       Ap.liftA2 (RootNode sz sh) (T.traverse f t) (A.traverseArray go_ as)
     go_ (DataNode a) = DataNode Ap.<$> A.traverseArray f a
@@ -188,13 +183,14 @@ pvTraverse f = go
 
 {-# INLINABLE append #-}
 append :: Vector a -> Vector a -> Vector a
-append EmptyVector v = v
-append v EmptyVector = v
+append v1 v2
+  | null v1 = v2
+  | null v2 = v1
 append v1 v2 = F.foldl' snoc v1 v2
 
 {-# INLINABLE pvRnf #-}
 pvRnf :: NFData a => Vector a -> ()
-pvRnf EmptyVector = ()
+pvRnf RootNode{vecSize = 0} = ()
 pvRnf (RootNode _ _ t as) = rnf as `seq` rnf t
 
 {-# INLINABLE pvRnf_ #-}
@@ -204,18 +200,18 @@ pvRnf_ (InternalNode a) = rnf a
 
 -- Functions
 
--- | The empty vector
+-- | The empty vector. The shift chosen here is not principled; there
+-- may be one we can use that lets us treat empty and nonempty vectors
+-- uniformly, but I haven't figured out how to do that yet.
 empty :: Vector a
-empty = EmptyVector
+empty = RootNode 0 0 [] A.empty
 
 -- | Test to see if the vector is empty. (O(1))
 null :: Vector a -> Bool
-null EmptyVector = True
-null _ = False
+null xs = length xs == 0
 
 -- | Get the length of the vector. (O(1))
 length :: Vector a -> Int
-length EmptyVector = 0
 length RootNode { vecSize = s } = s
 
 -- | Bounds-checked indexing into a vector. (O(1))
@@ -294,7 +290,8 @@ arraySnoc a elt = A.run $ do
 
 -- | Append an element to the end of the vector. (O(1))
 snoc :: Vector a -> a -> Vector a
-snoc EmptyVector elt = singleton elt
+snoc v elt
+  | null v = singleton elt
 snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
   -- Room in tail
   | sz .&. 0x1f /= 0 = v { vecTail = elt : t, vecSize = sz + 1 }
@@ -354,7 +351,6 @@ update ix elt = (// [(ix, elt)])
 (//)  = L.foldr replaceElement
 
 replaceElement :: (Int, a) -> Vector a -> Vector a
-replaceElement _ EmptyVector = EmptyVector
 replaceElement (ix, elt) v@(RootNode { vecSize = sz, vecShift = sh, vecTail = t })
   -- Invalid index
   | sz <= ix || ix < 0 = v
@@ -382,7 +378,6 @@ replaceElement (ix, elt) v@(RootNode { vecSize = sz, vecShift = sh, vecTail = t 
         vec' = A.index vec vix
 
 tailOffset :: Vector a -> Int
-tailOffset EmptyVector = 0
 tailOffset v
   | len < 32 = 0
   | otherwise = (len - 1) `shiftR` 5 `shiftL` 5
