@@ -24,14 +24,13 @@ instance Arbitrary IndexableList where
 
 indexableList :: Int -> Gen IndexableList
 indexableList sz = do
-  len <- chooseInt (1, 1 + 100 * sz) -- Tune this
+  len <- chooseInt (1, max 1 (400 * sz)) -- Tune this
   IndexableList <$> vector len <*> chooseInt (0, len - 1)
 
 inputList :: Int -> Gen InputList
 inputList sz = do
-  modifier <- chooseInt (0, 1000)
-  l <- vector (sz * modifier)
-  return $ InputList l
+  len <- chooseInt (1, max 1 (400 * sz)) -- Tune this
+  InputList <$> vector len
 
 tests :: [Test]
 tests = [ testProperty "toListFromListIdent" prop_toListFromListIdentity
@@ -41,6 +40,8 @@ tests = [ testProperty "toListFromListIdent" prop_toListFromListIdentity
         , testProperty "updateWorks" prop_updateWorks
         , testProperty "indexingWorks" prop_indexingWorks
         , testProperty "mappendWorks" prop_mappendWorks
+        , testProperty "eqWorksEqual" prop_eqWorks_equal
+        , testProperty "eqWorks" prop_eqWorks
         ]
 
 main :: IO ()
@@ -83,3 +84,11 @@ prop_indexingWorks (IndexableList il ix) =
 prop_mappendWorks :: (InputList, InputList) -> Bool
 prop_mappendWorks (InputList il1, InputList il2) =
   (il1 `mappend` il2) == F.toList (V.fromList il1 <> V.fromList il2)
+
+prop_eqWorks_equal :: InputList -> Bool
+prop_eqWorks_equal (InputList il) =
+  V.fromList il == V.fromList il
+
+prop_eqWorks :: InputList -> InputList -> Bool
+prop_eqWorks (InputList il1) (InputList il2) =
+  (V.fromList il1 == V.fromList il2) == (il1 == il2)
