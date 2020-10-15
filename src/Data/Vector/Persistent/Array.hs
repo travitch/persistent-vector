@@ -50,6 +50,7 @@ module Data.Vector.Persistent.Array
     , foldl'
     , boundedFoldl'
     , foldr
+    , foldr'
     , boundedFoldr
 
     , thaw
@@ -367,26 +368,27 @@ unsafeUpdate' ary idx b =
            return ()
 {-# INLINE unsafeUpdate' #-}
 
+-- | Note: strict in the initial accumulator value.
 foldl' :: (b -> a -> b) -> b -> Array a -> b
-foldl' f z0 ary0 = go ary0 (length ary0) 0 z0
+foldl' f !z0 !ary0 = go ary0 (length ary0) 0 z0
   where
-    go ary n i !z
+    go !ary n !i !z
         | i >= n    = z
         | (# x #) <- index# ary i
         = go ary n (i+1) (f z x)
 {-# INLINE foldl' #-}
 
 foldl :: (b -> a -> b) -> b -> Array a -> b
-foldl f z0 ary0 = go ary0 (length ary0) z0
+foldl f z0 !ary0 = go ary0 (length ary0) z0
   where
-    go ary i z
+    go !ary !i z
         | i == 0    = z
         | (# x #) <- index# ary (i - 1)
         = f (go ary (i-1) z) x
 {-# INLINE foldl #-}
 
 boundedFoldl' :: (b -> a -> b) -> Int -> Int -> b -> Array a -> b
-boundedFoldl' f start end z0 ary0 =
+boundedFoldl' f !start !end z0 ary0 =
   go ary0 (min end (length ary0)) (max 0 start) z0
   where
     go ary n i !z
@@ -396,20 +398,30 @@ boundedFoldl' f start end z0 ary0 =
 {-# INLINE boundedFoldl' #-}
 
 foldr :: (a -> b -> b) -> b -> Array a -> b
-foldr f z0 ary0 = go ary0 (length ary0) 0 z0
+foldr f z0 !ary0 = go ary0 (length ary0) 0 z0
 -- foldr f = \ z0 ary0 -> go ary0 (length ary0) 0 z0
   where
-    go ary n i z
+    go !ary !n !i z
         | i >= n    = z
         | (# x #) <- index# ary i
         = f x (go ary n (i+1) z)
 {-# INLINE foldr #-}
 
+-- | Note: Strict in the initial accumulator value.
+foldr' :: (a -> b -> b) -> b -> Array a -> b
+foldr' f !z0 !ary0 = go ary0 (length ary0) z0
+  where
+    go !ary !i !z
+        | i == 0 = z
+        | (# x #) <- index# ary (i - 1)
+        = go ary (i-1) (f x z)
+{-# INLINE foldr' #-}
+
 boundedFoldr :: (a -> b -> b) -> Int -> Int -> b -> Array a -> b
-boundedFoldr f start end z0 ary0 =
+boundedFoldr f !start !end z0 !ary0 =
   go ary0 (min end (length ary0)) (max 0 start) z0
   where
-    go ary n i z
+    go !ary !n !i z
       | i >= n = z
       | (# x #) <- index# ary i
       = f x (go ary n (i+1) z)
