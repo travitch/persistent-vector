@@ -8,8 +8,9 @@
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{- options_ghc -ddump-simpl #-}
 
-{-# OPTIONS_GHC -ddump-simpl #-}
 module Data.Vector.Persistent (
   Vector,
   -- * Construction
@@ -17,6 +18,7 @@ module Data.Vector.Persistent (
   singleton,
   snoc,
   fromList,
+  append,
   -- * Queries
   null,
   length,
@@ -30,7 +32,9 @@ module Data.Vector.Persistent (
   (//),
   -- * Folds
   foldr,
+  foldr',
   foldl,
+  foldl',
   -- * Transformations
   map,
   reverse,
@@ -46,7 +50,7 @@ import Prelude hiding
 
 import qualified Control.Applicative as Ap
 import Control.DeepSeq
-import Data.Bits
+import Data.Bits hiding (shiftR, shiftL)
 import qualified Data.Foldable as F
 import qualified Data.List as L
 import Data.Semigroup as Sem
@@ -54,6 +58,7 @@ import qualified Data.Traversable as T
 
 import Data.Vector.Persistent.Array ( Array )
 import qualified Data.Vector.Persistent.Array as A
+import qualified GHC.Exts as Exts
 
 -- Note: using Int here doesn't give the full range of 32 bits on a 32
 -- bit machine (it is fine on 64)
@@ -87,7 +92,11 @@ instance Ord a => Ord (Vector_ a) where
 instance F.Foldable Vector where
   foldMap = T.foldMapDefault
   foldr = foldr
+  foldr' = foldr'
   foldl = foldl
+  foldl' = foldl'
+  length = length
+  null = null
 
 instance Functor Vector where
   fmap = map
@@ -108,6 +117,14 @@ instance NFData a => NFData (Vector a) where
 
 instance NFData a => NFData (Vector_ a) where
   rnf = pvRnf_
+
+shiftR :: Int -> Int -> Int
+{-# INLINE shiftR #-}
+shiftR = unsafeShiftR
+
+shiftL :: Int -> Int -> Int
+{-# INLINE shiftL #-}
+shiftL = unsafeShiftL
 
 {-# INLINABLE pvEq #-}
 pvEq :: Eq a => Vector a -> Vector a -> Bool
@@ -146,23 +163,33 @@ map f = go
     go_ (DataNode v) = DataNode (A.map f v)
     go_ (InternalNode v) = InternalNode (A.map go_ v)
 
-{-# INLINABLE foldr #-}
+{-# INLINE foldr #-}
 foldr :: (a -> b -> b) -> b -> Vector a -> b
 foldr f = go
   where
-    go seed RootNode{vecSize = 0} = seed
     go seed (RootNode _ _ t as) = {-# SCC "gorRootNode" #-}
-      let tseed = F.foldl (flip f) seed t
+      let tseed = F.foldr f seed (L.reverse t) -- F.foldl (flip f) seed t
       in A.foldr go_ tseed as
     go_ (DataNode a) seed = {-# SCC "gorDataNode" #-} A.foldr f seed a
     go_ (InternalNode as) seed = {-# SCC "gorInternalNode" #-}
       A.foldr go_ seed as
 
-{-# INLINABLE foldl #-}
+-- | Note: Strict in the initial accumulator value.
+foldr' :: (a -> b -> b) -> b -> Vector a -> b
+{-# INLINE foldr' #-}
+foldr' f = go
+  where
+    go !seed (RootNode _ _ t as) = {-# SCC "gorRootNode" #-}
+      let !tseed = F.foldl' (flip f) seed t
+      in A.foldr' go_ tseed as
+    go_ (DataNode a) !seed = {-# SCC "gorDataNode" #-} A.foldr' f seed a
+    go_ (InternalNode as) !seed = {-# SCC "gorInternalNode" #-}
+      A.foldr' go_ seed as
+
+{-# INLINE foldl #-}
 foldl :: (b -> a -> b) -> b -> Vector a -> b
 foldl f = go
   where
-    go seed RootNode{vecSize = 0} = seed
     go seed (RootNode _ _ t as) =
       let rseed = A.foldl go_ seed as
       in F.foldr (flip f) rseed t
@@ -171,17 +198,28 @@ foldl f = go
     go_ seed (InternalNode as) =
       A.foldl go_ seed as
 
-{-# INLINABLE pvTraverse #-}
+-- | Note: Strict in the initial accumulator value.
+foldl' :: (b -> a -> b) -> b -> Vector a -> b
+{-# INLINE foldl' #-}
+foldl' f = go
+  where
+    go !seed (RootNode _ _ t as) =
+      let !rseed = A.foldl' go_ seed as
+      in F.foldl' f rseed (L.reverse t)
+    go_ !seed (DataNode a) = {-# SCC "golDataNode" #-} A.foldl' f seed a
+    go_ !seed (InternalNode as) =
+      A.foldl' go_ seed as
+
+{-# INLINE pvTraverse #-}
 pvTraverse :: Ap.Applicative f => (a -> f b) -> Vector a -> f (Vector b)
 pvTraverse f = go
   where
-    go RootNode{vecSize = 0} = Ap.pure empty
-    go (RootNode sz sh t as) =
-      Ap.liftA2 (RootNode sz sh) (T.traverse f t) (A.traverseArray go_ as)
+    go (RootNode sz sh t as)
+      | sz == 0 = pure empty
+      | otherwise = Ap.liftA2 (RootNode sz sh) (T.traverse f t) (A.traverseArray go_ as)
     go_ (DataNode a) = DataNode Ap.<$> A.traverseArray f a
     go_ (InternalNode as) = InternalNode Ap.<$> A.traverseArray go_ as
 
-{-# INLINABLE append #-}
 append :: Vector a -> Vector a -> Vector a
 append v1 v2
   | null v1 = v2
@@ -190,7 +228,6 @@ append v1 v2 = F.foldl' snoc v1 v2
 
 {-# INLINABLE pvRnf #-}
 pvRnf :: NFData a => Vector a -> ()
-pvRnf RootNode{vecSize = 0} = ()
 pvRnf (RootNode _ _ t as) = rnf as `seq` rnf t
 
 {-# INLINABLE pvRnf_ #-}
@@ -204,7 +241,7 @@ pvRnf_ (InternalNode a) = rnf a
 -- may be one we can use that lets us treat empty and nonempty vectors
 -- uniformly, but I haven't figured out how to do that yet.
 empty :: Vector a
-empty = RootNode 0 0 [] A.empty
+empty = RootNode 0 5 [] A.empty
 
 -- | Test to see if the vector is empty. (O(1))
 null :: Vector a -> Bool
@@ -281,20 +318,32 @@ singleton elt =
            }
 
 arraySnoc :: Array a -> a -> Array a
-arraySnoc a elt = A.run $ do
+arraySnoc !a elt = A.run $ do
   let alen = A.length a
   a' <- A.new_ (1 + alen)
   A.copy a 0 a' 0 alen
   A.write a' alen elt
   return a'
 
--- | Append an element to the end of the vector. (O(1))
+-- | Append an element to the end of the vector. \( O(1) \)
 snoc :: Vector a -> a -> Vector a
-snoc v elt
-  | null v = singleton elt
-snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
-  -- Room in tail
+-- We break this up into two pieces. We let the common case inline:
+-- that is the case of a nonempty vector with room in its tail.
+-- The case of an empty vector isn't common enough to bother inlining,
+-- and the case of a full tail is expensive anyway, so there's nothing
+-- to be gained by inlining. The remaining question: do we actually
+-- benefit from letting *any* of this inline? To be determined, but my
+-- guess is a strong maybe.
+snoc v@RootNode { vecSize = sz, vecTail = t } elt
+  -- Room in tail, and vector non-empty
   | sz .&. 0x1f /= 0 = v { vecTail = elt : t, vecSize = sz + 1 }
+  | otherwise = snocMain v elt
+
+snocMain :: Vector a -> a -> Vector a
+{-# NOINLINE snocMain #-}
+snocMain v elt
+  | null v = singleton elt
+snocMain v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
   -- Overflow current root
   | sz `shiftR` 5 > 1 `shiftL` sh =
     RootNode { vecSize = sz + 1
@@ -315,9 +364,9 @@ snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
 -- | A recursive helper for 'snoc'.  This finds the place to add new
 -- elements.
 pushTail :: Int -> [a] -> Int -> Array (Vector_ a) -> Array (Vector_ a)
-pushTail cnt t = go
+pushTail !cnt t !foo !bar = go foo bar
   where
-    go level parent
+    go !level !parent
       | level == 5 = arraySnoc parent (DataNode (A.fromListRev 32 t))
       | subIdx < A.length parent =
         let nextVec = A.index parent subIdx
@@ -334,35 +383,29 @@ newPath level t
   | level == 0 = DataNode (A.fromListRev 32 t)
   | otherwise = InternalNode $ A.fromList 1 $ [newPath (level - 5) t]
 
--- | \( O(1) \) Update a single element at @ix@ with new value @elt@ in @v@. (O(1))
+-- | \( O(1) \) Update a single element at @ix@ with new value @elt@.
+updateList :: Int -> a -> [a] -> [a]
+-- We do this pretty strictly to avoid building up thunks in the tail
+-- and to release the replaced value promptly.
+updateList !_ _ [] = []
+updateList 0 x (_ : ys) = x : ys
+updateList n x (y : ys) = (y :) $! updateList (n - 1) x ys
+
+-- | \( O(1) \) Update a single element at @ix@ with new value @elt@ in @v@. \( O(1) \)
 --
 -- > update ix elt v
 update :: Int -> a -> Vector a -> Vector a
-update ix elt = (// [(ix, elt)])
-
--- | \( O(n) \) Bulk update.
---
--- > v // updates
---
--- For each @(index, element)@ pair in @updates@, modify @v@ such that
--- the @index@th position of @v@ is @element@.
--- Indices in @updates@ that are not in @v@ are ignored
-(//) :: Vector a -> [(Int, a)] -> Vector a
-(//)  = L.foldr replaceElement
-
-replaceElement :: (Int, a) -> Vector a -> Vector a
-replaceElement (ix, elt) v@(RootNode { vecSize = sz, vecShift = sh, vecTail = t })
-  -- Invalid index
-  | sz <= ix || ix < 0 = v
-  -- Item is in tail,
-  | ix >= toff =
+update ix elt v@(RootNode { vecSize = sz, vecShift = sh, vecTail = t })
+  -- Invalid index. This funny business uses a single test to determine whether
+  -- ix is too small (negative) or too large (at least sz).
+  | (fromIntegral ix :: Word) >= fromIntegral sz = v
+  -- Item is in tail
+  | ix >= tailOffset v =
     let tix = sz - 1 - ix
-        (keepHead, _:keepTail) = L.splitAt tix t
-    in v { vecTail = keepHead ++ (elt : keepTail) }
+    in v { vecTail = updateList tix elt t}
   -- Otherwise the item to be replaced is in the tree
   | otherwise = v { intVecPtrs = go sh (intVecPtrs v) }
   where
-    toff = tailOffset v
     go level vec
       -- At the data level, modify the vector and start propagating it up
       | level == 5 =
@@ -377,22 +420,38 @@ replaceElement (ix, elt) v@(RootNode { vecSize = sz, vecShift = sh, vecTail = t 
         vix = (ix `shiftR` level) .&. 0x1f
         vec' = A.index vec vix
 
-tailOffset :: Vector a -> Int
-tailOffset v
-  | len < 32 = 0
-  | otherwise = (len - 1) `shiftR` 5 `shiftL` 5
+-- | \( O(n) \) Bulk update.
+--
+-- > v // updates
+--
+-- For each @(index, element)@ pair in @updates@, modify @v@ such that
+-- the @index@th position of @v@ is @element@.
+-- Indices in @updates@ that are not in @v@ are ignored. The updates are
+-- applied in order, so the last one at each index takes effegct.
+(//) :: Vector a -> [(Int, a)] -> Vector a
+-- Note: we fully apply foldl' to get everything to unbox.
+(//) vec = L.foldl' replaceElement vec
   where
-    len = length v
+    replaceElement v (ix, a) = update ix a v
+
+-- | The index of the first element of the tail of the vector (that is, the
+-- *last* element of the list representing the tail). This is also the number
+-- of elements stored in the array tree.
+--
+-- Caution: Only gives a sensible result if the vector is nonempty.
+tailOffset :: Vector a -> Int
+tailOffset v = (length v - 1) .&. ((-1) `shiftL` 5)
 
 -- | O(n) Reverse a vector
 reverse :: Vector a -> Vector a
-reverse = fromList . F.foldl' (flip (:)) []
+{-# NOINLINE reverse #-}
+reverse = foldr' (flip snoc) empty
 
 -- | O(n) Filter according to the predicate
 filter :: (a -> Bool) -> Vector a -> Vector a
-filter p = F.foldl' go empty
+filter p = \ !vec -> foldl' go empty vec
   where
-    go acc e = if p e then snoc acc e else acc
+    go !acc e = if p e then snoc acc e else acc
 
 -- | \( O(n) \) Return the elements that do and do not obey the predicate
 partition :: (a -> Bool) -> Vector a -> (Vector a, Vector a)
@@ -402,7 +461,7 @@ partition p v0 = case F.foldl' go (TwoVec empty empty) v0 of
     go (TwoVec atrue afalse) e =
       if p e then TwoVec (snoc atrue e) afalse else TwoVec atrue (snoc afalse e)
 
-data TwoVec a = TwoVec !(Vector a) !(Vector a)
+data TwoVec a = TwoVec {-# UNPACK #-} !(Vector a) {-# UNPACK #-} !(Vector a)
 
 -- | \( O(n) \) Construct a vector from a list. (O(n))
 fromList :: [a] -> Vector a

@@ -16,6 +16,14 @@ newtype InputList = InputList [Int]
 instance Arbitrary InputList where
   arbitrary = sized inputList
 
+data SizedList = SizedList [Int] !Int
+  deriving Show
+
+instance Arbitrary SizedList where
+  arbitrary = sized sizedList
+
+{-
+-- This doesn't actually seem like a gr
 data IndexableList = IndexableList [Int] !Int
   deriving Show
 
@@ -24,12 +32,20 @@ instance Arbitrary IndexableList where
 
 indexableList :: Int -> Gen IndexableList
 indexableList sz = do
-  len <- chooseInt (1, max 1 (400 * sz)) -- Tune this
+  len <- chooseInt (1, max 1 (sz))
   IndexableList <$> vector len <*> chooseInt (0, len - 1)
+-}
+
+
+sizedList :: Int -> Gen SizedList
+sizedList sz = do
+  len <- chooseInt (0, sz)
+  lst <- vector len
+  pure $ SizedList lst len
 
 inputList :: Int -> Gen InputList
 inputList sz = do
-  len <- chooseInt (1, max 1 (400 * sz)) -- Tune this
+  len <- chooseInt (1, max 1 (sz)) -- Tune this
   InputList <$> vector len
 
 tests :: [Test]
@@ -77,9 +93,11 @@ prop_updateWorks (InputList il, ix, repl) =
         True -> il
         False -> keepHead ++ (repl : keepTail)
 
-prop_indexingWorks :: IndexableList -> Bool
-prop_indexingWorks (IndexableList il ix) =
-  (il !! ix) == (V.unsafeIndex (V.fromList il) ix)
+prop_indexingWorks :: SizedList -> Bool
+prop_indexingWorks (SizedList il sz) =
+  il == [V.unsafeIndex vec ix | ix <- [0..sz - 1]]
+  where
+    vec = V.fromList il
 
 prop_mappendWorks :: (InputList, InputList) -> Bool
 prop_mappendWorks (InputList il1, InputList il2) =
