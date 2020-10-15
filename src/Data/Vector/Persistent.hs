@@ -55,23 +55,33 @@ import qualified Data.Vector.Persistent.Array as A
 
 -- Note: using Int here doesn't give the full range of 32 bits on a 32
 -- bit machine (it is fine on 64)
-data Vector a = EmptyVector
-              | RootNode { vecSize :: !Int
-                         , vecShift :: !Int
-                         , vecTail :: ![a]
-                         , intVecPtrs :: !(Array (Vector a))
-                         }
-              | InternalNode { intVecPtrs :: !(Array (Vector a))
-                             }
-              | DataNode { dataVec :: !(Array a)
-                         }
-              deriving Show
+data Vector a
+  = EmptyVector
+  | RootNode { vecSize :: !Int
+             , vecShift :: !Int
+             , vecTail :: ![a]
+             , intVecPtrs :: !(Array (Vector_ a))
+             }
+  deriving Show
+
+data Vector_ a
+    = InternalNode { intVecPtrs_ :: !(Array (Vector_ a))
+                   }
+    | DataNode { dataVec :: !(Array a)
+               }
+  deriving Show
 
 instance Eq a => Eq (Vector a) where
   (==) = pvEq
 
+instance Eq a => Eq (Vector_ a) where
+  (==) = pvEq_
+
 instance Ord a => Ord (Vector a) where
   compare = pvCompare
+
+instance Ord a => Ord (Vector_ a) where
+  compare = pvCompare_
 
 instance F.Foldable Vector where
   foldMap = T.foldMapDefault
@@ -92,30 +102,39 @@ instance Monoid (Vector a) where
 instance T.Traversable Vector where
   traverse = pvTraverse
 
-instance (NFData a) => NFData (Vector a) where
+instance NFData a => NFData (Vector a) where
   rnf = pvRnf
 
+instance NFData a => NFData (Vector_ a) where
+  rnf = pvRnf_
+
 {-# INLINABLE pvEq #-}
-pvEq :: (Eq a) => Vector a -> Vector a -> Bool
+pvEq :: Eq a => Vector a -> Vector a -> Bool
 pvEq EmptyVector EmptyVector = True
 pvEq (RootNode sz1 sh1 t1 v1) (RootNode sz2 sh2 t2 v2) =
   sz1 == sz2 && sh1 == sh2 && t1 == t2 && v1 == v2
-pvEq (DataNode a1) (DataNode a2) = a1 == a2
-pvEq (InternalNode a1) (InternalNode a2) = a1 == a2
 pvEq _ _ = False
+
+{-# INLINABLE pvEq_ #-}
+pvEq_ :: Eq a => Vector_ a -> Vector_ a -> Bool
+pvEq_ (DataNode a1) (DataNode a2) = a1 == a2
+pvEq_ (InternalNode a1) (InternalNode a2) = a1 == a2
+pvEq_ _ _ = False
 
 {-# INLINABLE pvCompare #-}
 pvCompare :: Ord a => Vector a -> Vector a -> Ordering
 pvCompare EmptyVector EmptyVector = EQ
 pvCompare (RootNode sz1 _ t1 v1) (RootNode sz2 _ t2 v2) =
   compare sz1 sz2 <> compare v1 v2 <> compare t1 t2
-pvCompare (DataNode a1) (DataNode a2) = compare a1 a2
-pvCompare (InternalNode a1) (InternalNode a2) = compare a1 a2
 pvCompare EmptyVector _ = LT
 pvCompare _ EmptyVector = GT
-pvCompare (InternalNode _) (DataNode _) = GT
-pvCompare (DataNode _) (InternalNode _) = LT
-pvCompare _ _ = error "Data.Vector.Persistent.pvCompare: Unexpected mismatch"
+
+{-# INLINABLE pvCompare_ #-}
+pvCompare_ :: Ord a => Vector_ a -> Vector_ a -> Ordering
+pvCompare_ (DataNode a1) (DataNode a2) = compare a1 a2
+pvCompare_ (InternalNode a1) (InternalNode a2) = compare a1 a2
+pvCompare_ (DataNode _) (InternalNode _) = LT
+pvCompare_ (InternalNode _) (DataNode _) = GT
 
 
 {-# INLINABLE map #-}
@@ -124,46 +143,48 @@ map :: (a -> b) -> Vector a -> Vector b
 map f = go
   where
     go EmptyVector = EmptyVector
-    go (DataNode v) = DataNode (A.map f v)
-    go (InternalNode v) = InternalNode (A.map (fmap f) v)
     go (RootNode sz sh t v) =
       let t' = L.map f t
-          v' = A.map (fmap f) v
+          v' = A.map go_ v
       in RootNode sz sh t' v'
+
+    go_ (DataNode v) = DataNode (A.map f v)
+    go_ (InternalNode v) = InternalNode (A.map go_ v)
 
 {-# INLINABLE foldr #-}
 foldr :: (a -> b -> b) -> b -> Vector a -> b
 foldr f = go
   where
     go seed EmptyVector = seed
-    go seed (DataNode a) = {-# SCC "gorDataNode" #-} A.foldr f seed a
-    go seed (InternalNode as) = {-# SCC "gorInternalNode" #-}
-      A.foldr (flip go) seed as
     go seed (RootNode _ _ t as) = {-# SCC "gorRootNode" #-}
       let tseed = F.foldl (flip f) seed t
-      in A.foldr (flip go) tseed as
+      in A.foldr go_ tseed as
+    go_ (DataNode a) seed = {-# SCC "gorDataNode" #-} A.foldr f seed a
+    go_ (InternalNode as) seed = {-# SCC "gorInternalNode" #-}
+      A.foldr go_ seed as
 
 {-# INLINABLE foldl #-}
 foldl :: (b -> a -> b) -> b -> Vector a -> b
 foldl f = go
   where
     go seed EmptyVector = seed
-    go seed (DataNode a) = {-# SCC "golDataNode" #-} A.foldl f seed a
-    go seed (InternalNode as) =
-      A.foldl go seed as
     go seed (RootNode _ _ t as) =
-      let rseed = A.foldl go seed as
+      let rseed = A.foldl go_ seed as
       in F.foldr (flip f) rseed t
+
+    go_ seed (DataNode a) = {-# SCC "golDataNode" #-} A.foldl f seed a
+    go_ seed (InternalNode as) =
+      A.foldl go_ seed as
 
 {-# INLINABLE pvTraverse #-}
 pvTraverse :: Ap.Applicative f => (a -> f b) -> Vector a -> f (Vector b)
 pvTraverse f = go
   where
     go EmptyVector = Ap.pure EmptyVector
-    go (DataNode a) = DataNode Ap.<$> A.traverseArray f a
-    go (InternalNode as) = InternalNode Ap.<$> A.traverseArray go as
     go (RootNode sz sh t as) =
-      Ap.liftA2 (RootNode sz sh) (T.traverse f t) (A.traverseArray go as)
+      Ap.liftA2 (RootNode sz sh) (T.traverse f t) (A.traverseArray go_ as)
+    go_ (DataNode a) = DataNode Ap.<$> A.traverseArray f a
+    go_ (InternalNode as) = InternalNode Ap.<$> A.traverseArray go_ as
 
 {-# INLINABLE append #-}
 append :: Vector a -> Vector a -> Vector a
@@ -172,11 +193,14 @@ append v EmptyVector = v
 append v1 v2 = F.foldl' snoc v1 v2
 
 {-# INLINABLE pvRnf #-}
-pvRnf :: (NFData a) => Vector a -> ()
+pvRnf :: NFData a => Vector a -> ()
 pvRnf EmptyVector = ()
-pvRnf (DataNode a) = rnf a
-pvRnf (InternalNode a) = rnf a
 pvRnf (RootNode _ _ t as) = rnf as `seq` rnf t
+
+{-# INLINABLE pvRnf_ #-}
+pvRnf_ :: NFData a => Vector_ a -> ()
+pvRnf_ (DataNode a) = rnf a
+pvRnf_ (InternalNode a) = rnf a
 
 -- Functions
 
@@ -193,8 +217,6 @@ null _ = False
 length :: Vector a -> Int
 length EmptyVector = 0
 length RootNode { vecSize = s } = s
-length InternalNode {} = error "Data.Vector.Persistent.length: Internal nodes should not be exposed"
-length DataNode {} = error "Data.Vector.Persistent.length: Data nodes should not be exposed"
 
 -- | Bounds-checked indexing into a vector. (O(1))
 index :: Vector a -> Int -> Maybe a
@@ -250,7 +272,7 @@ unsafeIndex# vec ix
       | level == 0 = A.index# (dataVec v) (ix .&. 0x1f)
       | otherwise =
         let nextVecIx = (ix `shiftR` level) .&. 0x1f
-            v' = intVecPtrs v
+            v' = intVecPtrs_ v
         in go (level - 5) (A.index v' nextVecIx)
 
 -- | Construct a vector with a single element. (O(1))
@@ -292,18 +314,17 @@ snoc v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
                , vecTail = [elt]
                , intVecPtrs = pushTail sz t sh (intVecPtrs v)
                }
-snoc _ _ = error "Data.Vector.Persistent.snoc: Internal nodes should not be exposed to the user"
 
 -- | A recursive helper for 'snoc'.  This finds the place to add new
 -- elements.
-pushTail :: Int -> [a] -> Int -> Array (Vector a) -> Array (Vector a)
+pushTail :: Int -> [a] -> Int -> Array (Vector_ a) -> Array (Vector_ a)
 pushTail cnt t = go
   where
     go level parent
       | level == 5 = arraySnoc parent (DataNode (A.fromListRev 32 t))
       | subIdx < A.length parent =
         let nextVec = A.index parent subIdx
-            toInsert = go (level - 5) (intVecPtrs nextVec)
+            toInsert = go (level - 5) (intVecPtrs_ nextVec)
         in A.update parent subIdx (InternalNode toInsert)
       | otherwise = arraySnoc parent (newPath (level - 5) t)
       where
@@ -311,7 +332,7 @@ pushTail cnt t = go
 
 -- | The other recursive helper for 'snoc'.  This one builds out a
 -- sub-tree to the current depth.
-newPath :: Int -> [a] -> Vector a
+newPath :: Int -> [a] -> Vector_ a
 newPath level t
   | level == 0 = DataNode (A.fromListRev 32 t)
   | otherwise = InternalNode $ A.fromList 1 $ [newPath (level - 5) t]
@@ -354,12 +375,11 @@ replaceElement (ix, elt) v@(RootNode { vecSize = sz, vecShift = sh, vecTail = t 
       -- In the tree, find the appropriate sub-array, call
       -- recursively, and re-allocate current array
       | otherwise =
-          let rnode = go (level - 5) (intVecPtrs vec')
+          let rnode = go (level - 5) (intVecPtrs_ vec')
           in A.update vec vix (InternalNode rnode)
       where
         vix = (ix `shiftR` level) .&. 0x1f
         vec' = A.index vec vix
-replaceElement _ _ = error "Data.Vector.Persistent.replaceElement: should not see internal nodes"
 
 tailOffset :: Vector a -> Int
 tailOffset EmptyVector = 0
