@@ -66,11 +66,16 @@ data Vector a
   = EmptyVector
   | RootNode
      { vecSize :: {-# UNPACK #-} !Int
+     -- ^ Number of elements in the vector
      , vecShift :: {-# UNPACK #-} !Int
+     -- ^ The pre-computed shift amount that has to be applied in various ways while traversing a tree of this size
      , vecOffset :: {-# UNPACK #-} !Int
      , vecCapacity :: {-# UNPACK #-} !Int
+     -- ^ Number of elements in the array portion of the vector (not counting the tail)
      , vecTail :: ![a]
+     -- ^ A cache of recently-appended values to get amortized constant time appends
      , intVecPtrs :: {-# UNPACK #-} !(Array (Vector_ a))
+     -- ^ Pointer to the tree of arrays holding the bulk of the values
      }
   deriving (Show)
 
