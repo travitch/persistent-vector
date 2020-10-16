@@ -41,12 +41,12 @@ sizedList :: Int -> Gen SizedList
 sizedList sz = do
   len <- chooseInt (0, sz)
   lst <- vector len
-  pure $ SizedList lst len
+  return $ SizedList lst len
 
 inputList :: Int -> Gen InputList
 inputList sz = do
   len <- chooseInt (1, max 1 (sz)) -- Tune this
-  InputList <$> vector len
+  InputList `fmap` vector len
 
 tests :: [Test]
 tests = [ testProperty "toListFromListIdent" prop_toListFromListIdentity

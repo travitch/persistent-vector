@@ -5,6 +5,7 @@
 -- bounds given are mostly O(1), but only if you are willing to accept
 -- that the tree cannot have height greater than 7 on 32 bit systems
 -- and maybe 8 on 64 bit systems.
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE BangPatterns #-}
@@ -58,7 +59,9 @@ import qualified Data.Traversable as T
 
 import Data.Vector.Persistent.Array ( Array )
 import qualified Data.Vector.Persistent.Array as A
-import qualified GHC.Exts as Exts
+#if !MIN_VERSION_base(4,8,0)
+import Data.Word (Word)
+#endif
 
 -- Note: using Int here doesn't give the full range of 32 bits on a 32
 -- bit machine (it is fine on 64)
@@ -92,11 +95,15 @@ instance Ord a => Ord (Vector_ a) where
 instance F.Foldable Vector where
   foldMap = T.foldMapDefault
   foldr = foldr
-  foldr' = foldr'
   foldl = foldl
+#if MIN_VERSION_base(4,6,0)
+  foldr' = foldr'
   foldl' = foldl'
+#endif
+#if MIN_VERSION_base(4,8,0)
   length = length
   null = null
+#endif
 
 instance Functor Vector where
   fmap = map
@@ -215,7 +222,7 @@ pvTraverse :: Ap.Applicative f => (a -> f b) -> Vector a -> f (Vector b)
 pvTraverse f = go
   where
     go (RootNode sz sh t as)
-      | sz == 0 = pure empty
+      | sz == 0 = Ap.pure empty
       | otherwise = Ap.liftA2 (RootNode sz sh) (T.traverse f t) (A.traverseArray go_ as)
     go_ (DataNode a) = DataNode Ap.<$> A.traverseArray f a
     go_ (InternalNode as) = InternalNode Ap.<$> A.traverseArray go_ as
@@ -283,11 +290,11 @@ unsafeIndex vec ix
   | (# a #) <- unsafeIndex# vec ix
   = a
 
-unsafeIndexA :: Applicative f => Vector a -> Int -> f a
+unsafeIndexA :: Ap.Applicative f => Vector a -> Int -> f a
 {-# INLINABLE unsafeIndexA #-}
 unsafeIndexA vec ix
   | (# a #) <- unsafeIndex# vec ix
-  = pure a
+  = Ap.pure a
 
 -- | Unchecked indexing into a vector. (O(1))
 --

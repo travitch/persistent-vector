@@ -1,0 +1,61 @@
+name: Haskell CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        ghc: ['8.4', '8.6', '8.8', '8.10']
+        os: [ubuntu-latest, macOS-latest, windows-latest]
+        exclude:
+          # 8.8.3 on windows throws segfaults when installing deps
+          - os: windows-latest
+            ghc: '8.8'
+    name: GHC ${{ matrix.ghc }} / ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-haskell@v1
+      with:
+        ghc-version: ${{ matrix.ghc }}
+        cabal-version: 'latest'
+
+    - name: Cache
+      uses: actions/cache@v1
+      env:
+        cache-name: cache-cabal
+      with:
+        path: ~/.cabal
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ matrix.ghc }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
+        restore-keys: |
+          ${{ runner.os }}-build-${{ env.cache-name }}-
+          ${{ runner.os }}-build-
+          ${{ runner.os }}-
+
+    - name: Install dependencies
+      run: |
+        cabal v2-update || cabal v2-update
+        cabal v2-build --only-dependencies --enable-tests --enable-benchmarks || cabal v2-build --only-dependencies --enable-tests --enable-benchmarks
+    - name: Build
+      run: cabal v2-build || cabal v2-build
+    - name: Test
+      run: |
+        # baseline:
+        cabal v2-test --test-show-details=always
+
+        # test lots of cases:
+        cabal v2-test --test-options="--quickcheck-tests=10000" --test-show-details=always
+
+        # test large cases:
+        cabal v2-test --test-options="--quickcheck-max-size=10000" --test-show-details=always
+
+        # test a moderate number of moderately sized cases:
+        cabal v2-test --test-options="--quickcheck-tests=1000 --quickcheck-max-size=1000" --test-show-details=always
+
+    - name: Check documentation syntax
+      run: cabal v2-haddock
