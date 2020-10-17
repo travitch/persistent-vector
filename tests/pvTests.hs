@@ -7,6 +7,9 @@ import Test.QuickCheck
 import qualified Data.Foldable as F
 import Data.Monoid
 import qualified Data.List as L
+import qualified Control.Applicative as Ap
+
+--import Data.Vector.Persistent ( Vector )
 import qualified Data.Vector.Persistent as V
 
 newtype InputList = InputList [Int]
@@ -14,37 +17,21 @@ newtype InputList = InputList [Int]
 instance Arbitrary InputList where
   arbitrary = sized inputList
 
-data IndexableList = IndexableList [Int] Int
-                   deriving (Show)
+data IndexableList = IndexableList [Int] !Int
+  deriving Show
 
 instance Arbitrary IndexableList where
   arbitrary = sized indexableList
 
-data SliceList = SliceList [Int] Int Int
-               deriving (Show)
-instance Arbitrary SliceList where
-  arbitrary = sized sliceList
-
-sliceList :: Int -> Gen SliceList
-sliceList sz = do
-  modifier <- choose (0, 100)
-  l <- vector (1 + (sz * modifier))
-  start <- choose (0, length l - 1)
-  len <- choose (0, 100)
-  return $ SliceList l start len
-
 indexableList :: Int -> Gen IndexableList
 indexableList sz = do
-  modifier <- choose (0, 100)
-  l <- vector (1 + (sz * modifier))
-  ix <- choose (0, length l - 1)
-  return $ IndexableList l ix
+  len <- chooseInt (1, max 1 (400 * sz)) -- Tune this
+  IndexableList Ap.<$> vector len Ap.<*> chooseInt (0, len - 1)
 
 inputList :: Int -> Gen InputList
 inputList sz = do
-  modifier <- choose (0, 100)
-  l <- vector (sz * modifier)
-  return $ InputList l
+  len <- chooseInt (1, max 1 (400 * sz)) -- Tune this
+  InputList Ap.<$> vector len
 
 tests :: [Test]
 tests = [ testProperty "toListFromListIdent" prop_toListFromListIdentity
@@ -53,18 +40,9 @@ tests = [ testProperty "toListFromListIdent" prop_toListFromListIdentity
         , testProperty "foldlWorks" prop_foldlWorks
         , testProperty "updateWorks" prop_updateWorks
         , testProperty "indexingWorks" prop_indexingWorks
-        , testProperty "take" prop_take
-        , testProperty "drop" prop_drop
-        , testProperty "splitAt" prop_splitAt
-        , testProperty "slice" prop_slice
-        , testProperty "slicedFoldl'" prop_slicedFoldl'
-        , testProperty "slicedFoldr" prop_sliceFoldr
         , testProperty "mappendWorks" prop_mappendWorks
-        , testProperty "shrink" prop_shrinkPreserves
-        , testProperty "shrinkEq" prop_shrinkEquality
-        , testProperty "appendAfterSlice" prop_appendAfterSlice
-        , testProperty "takeWhile" prop_takeWhile
-        , testProperty "dropWhile" prop_dropWhile
+        , testProperty "eqWorksEqual" prop_eqWorks_equal
+        , testProperty "eqWorks" prop_eqWorks
         ]
 
 main :: IO ()
@@ -86,7 +64,7 @@ prop_foldrWorks (InputList il) =
 
 prop_foldlWorks :: InputList -> Bool
 prop_foldlWorks (InputList il) =
-  F.foldl' (flip (:)) [] il == V.foldl' (flip (:)) [] (V.fromList il)
+  F.foldl (flip (:)) [] il == F.foldl (flip (:)) [] (V.fromList il)
 
 prop_updateWorks :: (InputList, Int, Int) -> Property
 prop_updateWorks (InputList il, ix, repl) =
@@ -104,65 +82,14 @@ prop_indexingWorks :: IndexableList -> Bool
 prop_indexingWorks (IndexableList il ix) =
   (il !! ix) == (V.unsafeIndex (V.fromList il) ix)
 
-prop_take :: IndexableList -> Bool
-prop_take (IndexableList il ix) =
-  L.take ix il == F.toList (V.take ix (V.fromList il))
-
-prop_drop :: IndexableList -> Bool
-prop_drop (IndexableList il ix) =
-  L.drop ix il == F.toList (V.drop ix (V.fromList il))
-
-prop_splitAt :: IndexableList -> Bool
-prop_splitAt (IndexableList il ix) =
-  let (v1, v2) = V.splitAt ix (V.fromList il)
-  in L.splitAt ix il == (F.toList v1, F.toList v2)
-
-listSlice :: Int -> Int -> [a] -> [a]
-listSlice s n = L.take n . (L.drop s)
-
-prop_slice :: SliceList -> Bool
-prop_slice (SliceList il s n) =
-  listSlice s n il == F.toList (V.slice s n (V.fromList il))
-
-prop_sliceFoldr :: SliceList -> Bool
-prop_sliceFoldr (SliceList il s n) =
-  L.foldr (:) [] (listSlice s n il) == V.foldr (:) [] (V.slice s n (V.fromList il))
-
-prop_slicedFoldl' :: SliceList -> Bool
-prop_slicedFoldl' (SliceList il s n) =
-  L.foldl' (flip (:)) [] (listSlice s n il) == V.foldl' (flip (:)) [] (V.slice s n (V.fromList il))
-
 prop_mappendWorks :: (InputList, InputList) -> Bool
 prop_mappendWorks (InputList il1, InputList il2) =
   (il1 `mappend` il2) == F.toList (V.fromList il1 <> V.fromList il2)
 
-prop_shrinkPreserves :: SliceList -> Bool
-prop_shrinkPreserves (SliceList il s n) =
-  F.toList v0 == F.toList (V.shrink v0)
-  where
-    v0 = V.slice s n (V.fromList il)
+prop_eqWorks_equal :: InputList -> Bool
+prop_eqWorks_equal (InputList il) =
+  V.fromList il == V.fromList il
 
-prop_shrinkEquality :: SliceList -> Bool
-prop_shrinkEquality (SliceList il s n) =
-  v0 == V.shrink v0
-  where
-    v0 = V.slice s n (V.fromList il)
-
-prop_appendAfterSlice :: (SliceList, Int) -> Property
-prop_appendAfterSlice (SliceList il s n, elt) =
-  n - s < L.length il ==> Just elt == V.index v1 (V.length v1 - 1)
-  where
-    v0 = V.slice s n (V.fromList il)
-    v1 = V.snoc v0 elt
-
-prop_takeWhile :: IndexableList -> Bool
-prop_takeWhile (IndexableList il ix) =
-  L.takeWhile (<ix) il == F.toList v
-  where
-    v = V.takeWhile (<ix) $ V.fromList il
-
-prop_dropWhile :: IndexableList -> Bool
-prop_dropWhile (IndexableList il ix) =
-  L.dropWhile (<ix) il == F.toList v
-  where
-    v = V.dropWhile (<ix) $ V.fromList il
+prop_eqWorks :: InputList -> InputList -> Bool
+prop_eqWorks (InputList il1) (InputList il2) =
+  (V.fromList il1 == V.fromList il2) == (il1 == il2)

@@ -1,5 +1,5 @@
 {-# LANGUAGE BangPatterns, CPP, MagicHash, Rank2Types, UnboxedTuples #-}
-{-# OPTIONS_GHC -fno-full-laziness -funbox-strict-fields #-}
+{-# OPTIONS_GHC -funbox-strict-fields #-}
 -- |
 -- Module: Data.Vector.Persistent.Array
 -- Copyright: Johan Tibell <johan.tibell@gmail.com>
@@ -15,6 +15,7 @@ module Data.Vector.Persistent.Array
       -- * Creation
     , new
     , new_
+    , empty
     , singleton
     , singleton'
     , pair
@@ -25,6 +26,7 @@ module Data.Vector.Persistent.Array
     , read
     , write
     , index
+    , index#
     , index_
     , indexM_
     , update
@@ -44,6 +46,7 @@ module Data.Vector.Persistent.Array
     , copyM
 
       -- * Folds
+    , foldl
     , foldl'
     , boundedFoldl'
     , foldr
@@ -55,19 +58,18 @@ module Data.Vector.Persistent.Array
     , traverseArray
     , filter
     , fromList
+    , fromListRev
     , toList
     ) where
 
 import qualified Data.Traversable as Traversable
 import qualified Control.Applicative as A
 import Control.DeepSeq
-import Control.Monad.ST hiding (runST)
+import Control.Monad.ST
 import qualified GHC.Exts as Ext
 import GHC.ST (ST(..))
-import Prelude hiding (filter, foldr, length, map, read)
+import Prelude hiding (filter, foldl, foldr, length, map, read)
 import qualified Prelude as P
-
-import Data.Vector.Persistent.Unsafe (runST)
 
 ------------------------------------------------------------------------
 
@@ -79,11 +81,13 @@ if (_k_) < 0 || (_k_) >= (_len_) then error ("Data.HashMap.Array." ++ (_func_) +
 # define CHECK_OP(_func_,_op_,_lhs_,_rhs_) \
 if not ((_lhs_) _op_ (_rhs_)) then error ("Data.HashMap.Array." ++ (_func_) ++ ": Check failed: _lhs_ _op_ _rhs_ (" ++ show (_lhs_) ++ " vs. " ++ show (_rhs_) ++ ")") else
 # define CHECK_GT(_func_,_lhs_,_rhs_) CHECK_OP(_func_,>,_lhs_,_rhs_)
+# define CHECK_GE(_func_,_lhs_,_rhs_) CHECK_OP(_func_,>=,_lhs_,_rhs_)
 # define CHECK_LE(_func_,_lhs_,_rhs_) CHECK_OP(_func_,<=,_lhs_,_rhs_)
 #else
 # define CHECK_BOUNDS(_func_,_len_,_k_)
 # define CHECK_OP(_func_,_op_,_lhs_,_rhs_)
 # define CHECK_GT(_func_,_lhs_,_rhs_)
+# define CHECK_GE(_func_,_lhs_,_rhs_)
 # define CHECK_LE(_func_,_lhs_,_rhs_)
 #endif
 
@@ -177,7 +181,7 @@ rnfArray ary0 = go ary0 n0 0
 -- value.
 new :: Int -> a -> ST s (MArray s a)
 new n@(Ext.I# n#) b =
-    CHECK_GT("new",n,(0 :: Int))
+    CHECK_GE("new",n,(0 :: Int))
     ST $ \s ->
         case Ext.newArray# n# b s of
             (# s', ary #) -> (# s', marray ary n #)
@@ -185,6 +189,13 @@ new n@(Ext.I# n#) b =
 
 new_ :: Int -> ST s (MArray s a)
 new_ n = new n undefinedElem
+
+-- The globally shared empty array. There's no point
+-- allocating a new empty array every time we need one
+-- when we can just follow a pointer to get one.
+empty :: Array a
+empty = runST (new_ 0 >>= unsafeFreeze)
+{-# NOINLINE empty #-}
 
 singleton :: a -> Array a
 singleton x = runST (singleton' x)
@@ -219,6 +230,12 @@ index ary _i@(Ext.I# i#) =
     CHECK_BOUNDS("index", length ary, _i)
         case Ext.indexArray# (unArray ary) i# of (# b #) -> b
 {-# INLINE index #-}
+
+index# :: Array a -> Int -> (# a #)
+index# ary _i@(Ext.I# i#) =
+    CHECK_BOUNDS("index", length ary, _i)
+        Ext.indexArray# (unArray ary) i#
+{-# INLINE index# #-}
 
 index_ :: Array a -> Int -> ST s a
 index_ ary _i@(Ext.I# i#) =
@@ -355,8 +372,18 @@ foldl' f z0 ary0 = go ary0 (length ary0) 0 z0
   where
     go ary n i !z
         | i >= n    = z
-        | otherwise = go ary n (i+1) (f z (index ary i))
+        | (# x #) <- index# ary i
+        = go ary n (i+1) (f z x)
 {-# INLINE foldl' #-}
+
+foldl :: (b -> a -> b) -> b -> Array a -> b
+foldl f z0 ary0 = go ary0 (length ary0) z0
+  where
+    go ary i z
+        | i == 0    = z
+        | (# x #) <- index# ary (i - 1)
+        = f (go ary (i-1) z) x
+{-# INLINE foldl #-}
 
 boundedFoldl' :: (b -> a -> b) -> Int -> Int -> b -> Array a -> b
 boundedFoldl' f start end z0 ary0 =
@@ -364,15 +391,18 @@ boundedFoldl' f start end z0 ary0 =
   where
     go ary n i !z
       | i >= n = z
-      | otherwise = go ary n (i+1) (f z (index ary i))
+      | (# x #) <- index# ary i
+      = go ary n (i+1) (f z x)
 {-# INLINE boundedFoldl' #-}
 
 foldr :: (a -> b -> b) -> b -> Array a -> b
 foldr f z0 ary0 = go ary0 (length ary0) 0 z0
+-- foldr f = \ z0 ary0 -> go ary0 (length ary0) 0 z0
   where
     go ary n i z
         | i >= n    = z
-        | otherwise = f (index ary i) (go ary n (i+1) z)
+        | (# x #) <- index# ary i
+        = f x (go ary n (i+1) z)
 {-# INLINE foldr #-}
 
 boundedFoldr :: (a -> b -> b) -> Int -> Int -> b -> Array a -> b
@@ -381,7 +411,8 @@ boundedFoldr f start end z0 ary0 =
   where
     go ary n i z
       | i >= n = z
-      | otherwise = f (index ary i) (go ary n (i+1) z)
+      | (# x #) <- index# ary i
+      = f x (go ary n (i+1) z)
 {-# INLINE boundedFoldr #-}
 
 undefinedElem :: a
@@ -455,8 +486,17 @@ fromList n xs0 = run $ do
     go xs0 mary 0
   where
     go [] !mary !_   = return mary
-    go (x:xs) mary i = do write mary i x
-                          go xs mary (i+1)
+    go (x:xs) !mary !i = do write mary i x
+                            go xs mary (i+1)
+
+fromListRev :: Int -> [a] -> Array a
+fromListRev n xs0 = run $ do
+    mary <- new_ n
+    go xs0 mary (n - 1)
+  where
+    go [] !mary !_   = return mary
+    go (x:xs) !mary !i = do write mary i x
+                            go xs mary (i-1)
 
 toList :: Array a -> [a]
 toList = foldr (:) []
