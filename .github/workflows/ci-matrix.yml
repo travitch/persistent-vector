@@ -51,5 +51,6 @@ jobs:
       run: |
         cabal v2-configure pkg:persistent-vector --enable-tests
         cabal v2-build pkg:persistent-vector
-        cabal v2-test pkg:persistent-vector
-
+        cabal v2-test pkg:persistent-vector --test-options="-a 10000"
+        cabal v2-test pkg:persistent-vector --test-options="-s 10000"
+        cabal v2-test pkg:persistent-vector --test-options="-a 1000 -s 1000"
