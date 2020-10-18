@@ -36,6 +36,7 @@ inputList sz = do
 
 tests :: [Test]
 tests = [ testProperty "toListFromListIdent" prop_toListFromListIdentity
+        , testProperty "fromListValid" prop_fromListValid
         , testProperty "fmap" prop_map
         , testProperty "foldrWorks" prop_foldrWorks
         , testProperty "foldlWorks" prop_foldlWorks
@@ -52,6 +53,10 @@ main = defaultMain tests
 prop_toListFromListIdentity :: InputList -> Bool
 prop_toListFromListIdentity (InputList il) =
   il == F.toList (V.fromList il)
+
+prop_fromListValid :: InputList -> Bool
+prop_fromListValid (InputList il) =
+  V.valid (V.fromList il)
 
 prop_map :: InputList -> Bool
 prop_map (InputList il) =
