@@ -31,7 +31,7 @@ sizedList sz = do
 
 inputList :: Int -> Gen InputList
 inputList sz = do
-  len <- chooseInt (1, max 1 (sz)) -- Tune this
+  len <- chooseInt (0, max 1 sz)
   InputList Ap.<$> vector len
 
 tests :: [Test]
