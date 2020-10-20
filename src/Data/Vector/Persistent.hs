@@ -407,9 +407,11 @@ snocMain v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
     RootNode { vecSize = sz + 1
              , vecShift = sh + 5
              , vecTail = [elt]
-             , intVecPtrs = A.fromList 2 [ InternalNode (intVecPtrs v)
-                                         , newPath sh t
-                                         ]
+             , intVecPtrs =
+                 let !np = newPath sh t
+                 in A.fromList 2 [ InternalNode (intVecPtrs v)
+                                 , np
+                                 ]
              }
   -- Insert into the tree
   | otherwise =
@@ -425,12 +427,12 @@ pushTail :: Int -> [a] -> Int -> Array (Vector_ a) -> Array (Vector_ a)
 pushTail !cnt t !foo !bar = go foo bar
   where
     go !level !parent
-      | level == 5 = arraySnoc parent (DataNode (A.fromListRev 32 t))
+      | level == 5 = arraySnoc parent $! DataNode (A.fromListRev 32 t)
       | subIdx < A.length parent =
         let nextVec = A.index parent subIdx
             toInsert = go (level - 5) (intVecPtrs_ nextVec)
-        in A.update parent subIdx (InternalNode toInsert)
-      | otherwise = arraySnoc parent (newPath (level - 5) t)
+        in A.update parent subIdx $! InternalNode toInsert
+      | otherwise = arraySnoc parent $! newPath (level - 5) t
       where
         subIdx = ((cnt - 1) `shiftR` level) .&. 0x1f
 
@@ -439,7 +441,7 @@ pushTail !cnt t !foo !bar = go foo bar
 newPath :: Int -> [a] -> Vector_ a
 newPath level t
   | level == 0 = DataNode (A.fromListRev 32 t)
-  | otherwise = InternalNode $ A.fromList 1 $ [newPath (level - 5) t]
+  | otherwise = InternalNode $ A.singleton $! newPath (level - 5) t
 
 -- | Update a single element at @ix@ with new value @elt@.
 updateList :: Int -> a -> [a] -> [a]
