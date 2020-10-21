@@ -469,12 +469,12 @@ update ix elt v@(RootNode { vecSize = sz, vecShift = sh, vecTail = t })
     go level vec
       -- At the data level, modify the vector and start propagating it up
       | level == 5 =
-        let dnode = DataNode $ A.update (dataVec vec') (ix .&. 0x1f) elt
+        let !dnode = DataNode $ A.update (dataVec vec') (ix .&. 0x1f) elt
         in A.update vec vix dnode
       -- In the tree, find the appropriate sub-array, call
       -- recursively, and re-allocate current array
       | otherwise =
-          let rnode = go (level - 5) (intVecPtrs_ vec')
+          let !rnode = go (level - 5) (intVecPtrs_ vec')
           in A.update vec vix (InternalNode rnode)
       where
         vix = (ix `shiftR` level) .&. 0x1f
