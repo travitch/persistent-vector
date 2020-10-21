@@ -1,7 +1,14 @@
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE BangPatterns #-}
+{-# language DataKinds #-}
+{-# language GADTs #-}
+{-# language StandaloneDeriving #-}
+{-# language ViewPatterns #-}
 {- OPTIONS_GHC -Wall #-}
+
+{-# OPTIONS_GHC -Wincomplete-patterns #-}
+{- options_ghc -ddump-simpl -ddump-rule-rewrites #-}
 
 -- | This is a port of the persistent vector from clojure to Haskell.
 -- It is spine-strict and lazy in the elements.
@@ -43,7 +50,8 @@ module Data.Vector.Persistent (
   reverse,
   -- * Searches
   filter,
-  partition
+  partition,
+  valid
   ) where
 
 import Prelude hiding
@@ -52,6 +60,7 @@ import Prelude hiding
   , reverse, splitAt, filter )
 
 import qualified Control.Applicative as Ap
+import Control.Exception (assert)
 import Control.DeepSeq
 import Data.Bits hiding (shiftR, shiftL)
 import qualified Data.Foldable as F
@@ -60,7 +69,9 @@ import Data.Semigroup as Sem
 import qualified Data.Traversable as T
 
 import Data.Vector.Persistent.Array ( Array )
+import Data.Vector.Persistent.Level
 import qualified Data.Vector.Persistent.Array as A
+import Data.Type.Equality
 #if !MIN_VERSION_base(4,8,0)
 import Data.Word (Word)
 #endif
@@ -70,33 +81,35 @@ import Data.Word (Word)
 
 -- | Persistent vectors based on array mapped tries
 data Vector a
-  = RootNode
+  = forall lev. RootNode
      { vecSize :: !Int
-     , vecShift :: !Int
+     , vecShift :: !(SLevel lev)
      , vecTail :: ![a]
-     , intVecPtrs :: !(Array (Vector_ a))
+     , intVecPtrs :: !(Vector_ lev a)
      }
-  deriving Show
 
-data Vector_ a
-  = InternalNode
-      { intVecPtrs_ :: !(Array (Vector_ a))
-      }
-  | DataNode
+deriving instance Show a => Show (Vector a)
+
+data Vector_ lev a where
+  InternalNode ::
+      { intVecPtrs_ :: !(Array (Vector_ lev a))
+      } -> Vector_ ('FivePlus lev) a
+  DataNode ::
       { dataVec :: !(Array a)
-      }
-  deriving Show
+      } -> Vector_ 'Zero a
+
+deriving instance Show a => Show (Vector_ lev a)
 
 instance Eq a => Eq (Vector a) where
   (==) = pvEq
 
-instance Eq a => Eq (Vector_ a) where
+instance Eq a => Eq (Vector_ lev a) where
   (==) = pvEq_
 
 instance Ord a => Ord (Vector a) where
   compare = pvCompare
 
-instance Ord a => Ord (Vector_ a) where
+instance Ord a => Ord (Vector_ lev a) where
   compare = pvCompare_
 
 instance F.Foldable Vector where
@@ -129,7 +142,7 @@ instance T.Traversable Vector where
 instance NFData a => NFData (Vector a) where
   rnf = pvRnf
 
-instance NFData a => NFData (Vector_ a) where
+instance NFData a => NFData (Vector_ lev a) where
   rnf = pvRnf_
 
 shiftR :: Int -> Int -> Int
@@ -143,48 +156,54 @@ shiftL = unsafeShiftL
 {-# INLINABLE pvEq #-}
 pvEq :: Eq a => Vector a -> Vector a -> Bool
 pvEq (RootNode sz1 sh1 t1 v1) (RootNode sz2 sh2 t2 v2) =
-  sz1 == sz2 && (sz1 == 0 || (sh1 == sh2 && t1 == t2 && v1 == v2))
+  sz1 == sz2 && (sz1 == 0 || proceed)
+  where
+    proceed
+      | Just Refl <- testEquality sh1 sh2
+      = t1 == t2 && v1 == v2
+      | otherwise
+      = error "pvEq: Trees of the same size should have the same depth."
 
 {-# INLINABLE pvEq_ #-}
-pvEq_ :: Eq a => Vector_ a -> Vector_ a -> Bool
+pvEq_ :: Eq a => Vector_ lev a -> Vector_ lev a -> Bool
 pvEq_ (DataNode a1) (DataNode a2) = a1 == a2
 pvEq_ (InternalNode a1) (InternalNode a2) = a1 == a2
-pvEq_ _ _ = False
 
 {-# INLINABLE pvCompare #-}
 pvCompare :: Ord a => Vector a -> Vector a -> Ordering
-pvCompare (RootNode sz1 _ t1 v1) (RootNode sz2 _ t2 v2) =
-  compare sz1 sz2 <> if sz1 == 0 then EQ else compare v1 v2 <> compare t1 t2
+pvCompare (RootNode sz1 sh1 t1 v1) (RootNode sz2 sh2 t2 v2) =
+  compare sz1 sz2 <> case testEquality sh1 sh2 of
+    Just Refl -> if sz1 == 0 then EQ else compare v1 v2 <> compare t1 t2
+    Nothing -> error "pvCompare: Trees of the same size should have the same depth."
 
 {-# INLINABLE pvCompare_ #-}
-pvCompare_ :: Ord a => Vector_ a -> Vector_ a -> Ordering
+pvCompare_ :: Ord a => Vector_ lev a -> Vector_ lev a -> Ordering
 pvCompare_ (DataNode a1) (DataNode a2) = compare a1 a2
 pvCompare_ (InternalNode a1) (InternalNode a2) = compare a1 a2
-pvCompare_ (DataNode _) (InternalNode _) = LT
-pvCompare_ (InternalNode _) (DataNode _) = GT
-
 
 {-# INLINABLE map #-}
 -- | \( O(n) \) Map over the vector
-map :: (a -> b) -> Vector a -> Vector b
+map :: forall a b. (a -> b) -> Vector a -> Vector b
 map f = go
   where
     go (RootNode sz sh t v) =
       let t' = L.map f t
-          v' = A.map go_ v
+          v' = go_ v
       in RootNode sz sh t' v'
 
+    go_ :: Vector_ lev a -> Vector_ lev b
     go_ (DataNode v) = DataNode (A.map f v)
     go_ (InternalNode v) = InternalNode (A.map go_ v)
 
 {-# INLINE foldr #-}
 -- | \( O(n) \) Right fold over the vector
-foldr :: (a -> b -> b) -> b -> Vector a -> b
+foldr :: forall a b. (a -> b -> b) -> b -> Vector a -> b
 foldr f = go
   where
     go seed (RootNode _ _ t as) = {-# SCC "gorRootNode" #-}
       let tseed = F.foldr f seed (L.reverse t)
-      in A.foldr go_ tseed as
+      in go_ as tseed
+    go_ :: Vector_ lev a -> b -> b
     go_ (DataNode a) seed = {-# SCC "gorDataNode" #-} A.foldr f seed a
     go_ (InternalNode as) seed = {-# SCC "gorInternalNode" #-}
       A.foldr go_ seed as
@@ -192,24 +211,26 @@ foldr f = go
 -- | \( O(n) \) Strict right fold over the vector.
 --
 -- Note: Strict in the initial accumulator value.
-foldr' :: (a -> b -> b) -> b -> Vector a -> b
+foldr' :: forall a b. (a -> b -> b) -> b -> Vector a -> b
 {-# INLINE foldr' #-}
 foldr' f = go
   where
     go !seed (RootNode _ _ t as) = {-# SCC "gorRootNode" #-}
       let !tseed = F.foldl' (flip f) seed t
-      in A.foldr' go_ tseed as
+      in go_ as tseed
+    go_ :: Vector_ lev a -> b -> b
     go_ (DataNode a) !seed = {-# SCC "gorDataNode" #-} A.foldr' f seed a
     go_ (InternalNode as) !seed = {-# SCC "gorInternalNode" #-}
       A.foldr' go_ seed as
 
 -- | \( O(n) \) Left fold over the vector.
-foldl :: (b -> a -> b) -> b -> Vector a -> b
+foldl :: forall b a. (b -> a -> b) -> b -> Vector a -> b
 {-# INLINE foldl #-}
 foldl f = go
   where
+    go_ :: b -> Vector_ lev a -> b
     go seed (RootNode _ _ t as) =
-      let rseed = A.foldl go_ seed as
+      let rseed = go_ seed as
       in F.foldr (flip f) rseed t
 
     go_ seed (DataNode a) = {-# SCC "golDataNode" #-} A.foldl f seed a
@@ -219,24 +240,26 @@ foldl f = go
 -- | \( O(n) \) Strict left fold over the vector.
 --
 -- Note: Strict in the initial accumulator value.
-foldl' :: (b -> a -> b) -> b -> Vector a -> b
+foldl' :: forall b a. (b -> a -> b) -> b -> Vector a -> b
 {-# INLINE foldl' #-}
 foldl' f = go
   where
     go !seed (RootNode _ _ t as) =
-      let !rseed = A.foldl' go_ seed as
+      let !rseed = go_ seed as
       in F.foldl' f rseed (L.reverse t)
+    go_ :: b -> Vector_ lev a -> b
     go_ !seed (DataNode a) = {-# SCC "golDataNode" #-} A.foldl' f seed a
     go_ !seed (InternalNode as) =
       A.foldl' go_ seed as
 
 {-# INLINE pvTraverse #-}
-pvTraverse :: Ap.Applicative f => (a -> f b) -> Vector a -> f (Vector b)
+pvTraverse :: forall f a b. Ap.Applicative f => (a -> f b) -> Vector a -> f (Vector b)
 pvTraverse f = go
   where
     go (RootNode sz sh t as)
       | sz == 0 = Ap.pure empty
-      | otherwise = Ap.liftA2 (RootNode sz sh) (T.traverse f t) (A.traverseArray go_ as)
+      | otherwise = Ap.liftA2 (RootNode sz sh) (T.traverse f t) (go_ as)
+    go_ :: Vector_ lev a -> f (Vector_ lev b)
     go_ (DataNode a) = DataNode Ap.<$> A.traverseArray f a
     go_ (InternalNode as) = InternalNode Ap.<$> A.traverseArray go_ as
 
@@ -251,13 +274,13 @@ pvRnf :: NFData a => Vector a -> ()
 pvRnf (RootNode _ _ t as) = rnf as `seq` rnf t
 
 {-# INLINABLE pvRnf_ #-}
-pvRnf_ :: NFData a => Vector_ a -> ()
+pvRnf_ :: NFData a => Vector_ lev a -> ()
 pvRnf_ (DataNode a) = rnf a
 pvRnf_ (InternalNode a) = rnf a
 
 -- | \( O(1) \) The empty vector.
 empty :: Vector a
-empty = RootNode 0 5 [] A.empty
+empty = RootNode 0 SZero [] (DataNode A.empty)
 
 -- | \( O(1) \) Test to see if the vector is empty.
 null :: Vector a -> Bool
@@ -351,27 +374,25 @@ unsafeIndexA vec ix
 -- unsafeIndexA :: Vector a -> Int -> Solo a
 -- @
 unsafeIndex# :: Vector a -> Int -> (# a #)
-unsafeIndex# vec ix
+unsafeIndex# vec@RootNode{vecShift = sh, intVecPtrs = tree} ix
   | ix >= tailOffset vec =
     (vecTail vec) `revIx#` (ix .&. 0x1f)
   | otherwise =
-      let sh = vecShift vec
-      in go (sh - 5) (A.index (intVecPtrs vec) (ix `shiftR` sh))
+      go sh tree
   where
-    go level v
-      | level == 0 = A.index# (dataVec v) (ix .&. 0x1f)
-      | otherwise =
-        let nextVecIx = (ix `shiftR` level) .&. 0x1f
-            v' = intVecPtrs_ v
-        in go (level - 5) (A.index v' nextVecIx)
+    go :: SLevel lev -> Vector_ lev a -> (# a #)
+    go SZero (DataNode v) = A.index# v (ix .&. 0x1f)
+    go level@(SFivePlus level') (InternalNode v) =
+        let nextVecIx = (ix `shiftR` unSLevel level) .&. 0x1f
+        in go level' (A.index v nextVecIx)
 
 -- | \( O(1) \) Construct a vector with a single element.
 singleton :: a -> Vector a
 singleton elt =
   RootNode { vecSize = 1
-           , vecShift = 5
+           , vecShift = SZero
            , vecTail = [elt]
-           , intVecPtrs = A.empty
+           , intVecPtrs = DataNode A.empty
            }
 
 -- | A helper to copy an array and add an element to the end.
@@ -397,51 +418,72 @@ snoc v@RootNode { vecSize = sz, vecTail = t } elt
   | sz .&. 0x1f /= 0 = v { vecTail = elt : t, vecSize = sz + 1 }
   | otherwise = snocMain v elt
 
-snocMain :: Vector a -> a -> Vector a
+snocMain :: forall a. Vector a -> a -> Vector a
 {-# NOINLINE snocMain #-}
-snocMain v elt
-  | null v = singleton elt
-snocMain v@RootNode { vecSize = sz, vecShift = sh, vecTail = t } elt
+snocMain v@RootNode { vecSize = sz, vecShift = sh, intVecPtrs = tree, vecTail = t } elt
   -- Overflow current root
-  | sz `shiftR` 5 > 1 `shiftL` sh =
-    RootNode { vecSize = sz + 1
-             , vecShift = sh + 5
-             , vecTail = [elt]
-             , intVecPtrs =
-                 let !np = newPath sh t
-                 in A.fromList 2 [ InternalNode (intVecPtrs v)
-                                 , np
-                                 ]
-             }
-  -- Insert into the tree
-  | otherwise =
-      RootNode { vecSize = sz + 1
-               , vecShift = sh
-               , vecTail = [elt]
-               , intVecPtrs = pushTail sz t sh (intVecPtrs v)
-               }
+  | sz `shiftR` 5 > 1 `shiftL` unSLevel sh
+  = let !np = newPath sh tvec
+    in finish (SFivePlus sh)
+              (InternalNode $ A.pair tree np)
+  | otherwise
+  = case sh of
+      SZero
+        | null v
+        -> singleton elt
+        | otherwise
+        -> assert (sz == 32) $ finish sh tvec
+      SFivePlus _
+        -- Insert into the tree
+        ->  finish sh (pushTail sz tvec sh tree)
+  where
+    !tvec = DataNode (A.fromListRev 32 t)
+    finish :: SLevel lev -> Vector_ lev a -> Vector a
+    finish sh' ptrs' = RootNode
+      { vecSize = sz + 1
+      , vecShift = sh'
+      , vecTail = [elt]
+      , intVecPtrs = ptrs' }
 
 -- | A recursive helper for 'snoc'.  This finds the place to add new
 -- elements.
-pushTail :: Int -> [a] -> Int -> Array (Vector_ a) -> Array (Vector_ a)
-pushTail !cnt t !foo !bar = go foo bar
+--
+-- Must be called only with an 'InternalNode'.
+pushTail :: forall lev a. Int -> Vector_ 'Zero a -> SLevel ('FivePlus lev) -> Vector_ ('FivePlus lev) a -> Vector_ ('FivePlus lev) a
+pushTail !cnt !t !foo !bar = go foo bar
   where
-    go !level !parent
-      | level == 5 = arraySnoc parent $! DataNode (A.fromListRev 32 t)
-      | subIdx < A.length parent =
-        let nextVec = A.index parent subIdx
-            toInsert = go (level - 5) (intVecPtrs_ nextVec)
-        in A.update parent subIdx $! InternalNode toInsert
-      | otherwise = arraySnoc parent $! newPath (level - 5) t
+    go :: forall lev'. SLevel ('FivePlus lev') -> Vector_ ('FivePlus lev') a -> Vector_ ('FivePlus lev') a
+    -- Note: This outer pattern match doesn't actually perform
+    -- an equality test; that's sorted out by a rewrite rule in the
+    -- Level implementation.
+    --
+    -- GHC does a really lousy job with this function if we use pattern
+    -- synonyms here. The rewrite rule doesn't fire, so we get unnecessary
+    -- equality tests. Worse, a pattern match failure continuation doesn't
+    -- get recognized as a join point. So we just use 'checkFive' manually
+    -- here.
+    go level@(checkFive -> IsFivePlus (lev' :: SLevel m)) (InternalNode parent)
+      | subIdx < A.length parent
+        -- The IsFivePlus test is guaranteed to succeed here; we need
+        -- it to get the types right in the recursive call. I don't think
+        -- this is likely to be a big performance problem; if I'm wrong
+        -- we can `unsafeCoerce` our way to glory.
+      , IsFivePlus _ <- checkFive lev' =
+        let
+            nextVec :: Vector_ m a
+            nextVec = A.index parent subIdx
+            toInsert :: Vector_ m a
+            toInsert = go lev' nextVec
+        in InternalNode $ A.update parent subIdx $! toInsert
+      | otherwise = InternalNode $ arraySnoc parent $! newPath lev' t
       where
-        subIdx = ((cnt - 1) `shiftR` level) .&. 0x1f
+        subIdx = ((cnt - 1) `shiftR` unSLevel level) .&. 0x1f
 
 -- | The other recursive helper for 'snoc'.  This one builds out a
 -- sub-tree to the current depth.
-newPath :: Int -> [a] -> Vector_ a
-newPath level t
-  | level == 0 = DataNode (A.fromListRev 32 t)
-  | otherwise = InternalNode $ A.singleton $! newPath (level - 5) t
+newPath :: SLevel lev -> Vector_ 'Zero a -> Vector_ lev a
+newPath SZero t = t
+newPath (SFivePlus lev') t = InternalNode $ A.singleton $! newPath lev' t
 
 -- | Update a single element at @ix@ with new value @elt@.
 updateList :: Int -> a -> [a] -> [a]
@@ -454,31 +496,24 @@ updateList n x (y : ys) = (y :) $! updateList (n - 1) x ys
 -- | \( O(1) \) Update a single element at @ix@ with new value @elt@ in @v@.
 --
 -- > update ix elt v
-update :: Int -> a -> Vector a -> Vector a
-update ix elt v@(RootNode { vecSize = sz, vecShift = sh, vecTail = t })
+update :: forall a. Int -> a -> Vector a -> Vector a
+update ix elt vec@(RootNode { vecShift = sh, vecSize = sz, intVecPtrs = tree, vecTail = t })
   -- Invalid index. This funny business uses a single test to determine whether
   -- ix is too small (negative) or too large (at least sz).
-  | (fromIntegral ix :: Word) >= fromIntegral sz = v
+  | (fromIntegral ix :: Word) >= fromIntegral sz = vec
   -- Item is in tail
-  | ix >= tailOffset v =
+  | ix >= tailOffset vec =
     let tix = sz - 1 - ix
-    in v { vecTail = updateList tix elt t}
+    in vec { vecTail = updateList tix elt t}
   -- Otherwise the item to be replaced is in the tree
-  | otherwise = v { intVecPtrs = go sh (intVecPtrs v) }
+  | otherwise =
+      RootNode {intVecPtrs = go sh tree, vecShift = sh, vecTail = t, vecSize = sz}
   where
-    go level vec
-      -- At the data level, modify the vector and start propagating it up
-      | level == 5 =
-        let !dnode = DataNode $ A.update (dataVec vec') (ix .&. 0x1f) elt
-        in A.update vec vix dnode
-      -- In the tree, find the appropriate sub-array, call
-      -- recursively, and re-allocate current array
-      | otherwise =
-          let !rnode = go (level - 5) (intVecPtrs_ vec')
-          in A.update vec vix (InternalNode rnode)
-      where
-        vix = (ix `shiftR` level) .&. 0x1f
-        vec' = A.index vec vix
+    go :: SLevel lev -> Vector_ lev a -> Vector_ lev a
+    go SZero (DataNode v) = DataNode $ A.update v (ix .&. 0x1f) elt
+    go level@(SFivePlus lev') (InternalNode v) =
+        let nextVecIx = (ix `shiftR` unSLevel level) .&. 0x1f
+        in InternalNode $ A.updateWith v nextVecIx $! go lev'
 
 -- | \( O(n) \) Bulk update.
 --
@@ -526,3 +561,55 @@ data TwoVec a = TwoVec {-# UNPACK #-} !(Vector a) {-# UNPACK #-} !(Vector a)
 -- | \( O(n) \) Construct a vector from a list. (O(n))
 fromList :: [a] -> Vector a
 fromList = F.foldl' snoc empty
+
+-- | Does the vector have an acceptable shape?
+valid :: Vector a -> Bool
+valid v@RootNode { vecSize = sz, intVecPtrs = tree, vecTail = t }
+  | sz == 0
+  = L.null t && case tree of
+      DataNode vec -> A.length vec == 0
+      InternalNode _ -> False
+  | sz <= 32
+  = case tree of
+      DataNode vec -> A.length vec == 0
+      InternalNode _ -> False
+  | L.null t = False
+  | L.length t > 32 = False
+  | sz /= foldr' (\_ acc -> acc + 1) 0 v = False
+  | Invalid <- valid_ tree
+  = False
+  | otherwise = True
+
+-- Checks that a subtree is valid.
+valid_ :: Vector_ lev a -> Validity
+valid_ (DataNode v)
+  | A.length v == 32
+  = NoBranches
+  | otherwise = Invalid
+valid_ (InternalNode as)
+  | 1 <= len && len <= 32
+  = F.foldMap full_ (L.init (A.toList as)) <> valid_ (A.index as (len - 1))
+  | otherwise = Invalid
+  where len = A.length as
+
+-- Returns Invalid if the tree is not full
+full_ :: Vector_ lev a -> Validity
+full_ (DataNode as)
+  | A.length as == 32
+  = NoBranches
+  | otherwise = Invalid
+full_ (InternalNode as)
+  | A.length as == 32
+  = F.foldMap full_ (A.toList as)
+  | otherwise = Invalid
+
+data Validity = Invalid | Branches | NoBranches
+instance Semigroup Validity where
+  Invalid <> _ = Invalid
+  _ <> Invalid = Invalid
+  NoBranches <> NoBranches = NoBranches
+  _ <> _ = Branches
+
+instance Monoid Validity where
+  mempty = NoBranches
+  mappend = (<>)
