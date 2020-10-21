@@ -8,6 +8,7 @@ import qualified Data.Foldable as F
 import Data.Monoid
 import qualified Data.List as L
 import qualified Control.Applicative as Ap
+import qualified Data.Traversable as T
 
 --import Data.Vector.Persistent ( Vector )
 import qualified Data.Vector.Persistent as V
@@ -39,6 +40,7 @@ tests = [ testProperty "toListFromListIdent" prop_toListFromListIdentity
         , testProperty "fmap" prop_map
         , testProperty "foldrWorks" prop_foldrWorks
         , testProperty "foldlWorks" prop_foldlWorks
+        , testProperty "traverseWorks" prop_traverseWorks
         , testProperty "updateWorks" prop_updateWorks
         , testProperty "indexingWorks" prop_indexingWorks
         , testProperty "mappendWorks" prop_mappendWorks
@@ -96,3 +98,9 @@ prop_eqWorks_equal (InputList il) =
 prop_eqWorks :: InputList -> InputList -> Bool
 prop_eqWorks (InputList il1) (InputList il2) =
   (V.fromList il1 == V.fromList il2) == (il1 == il2)
+
+prop_traverseWorks :: InputList -> Bool
+prop_traverseWorks (InputList il) =
+  fmap F.toList (T.traverse go (V.fromList il)) == T.traverse go il
+  where
+    go a = ([a], a)
