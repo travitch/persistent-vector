@@ -58,6 +58,7 @@ import qualified Data.Foldable as F
 import qualified Data.List as L
 import Data.Semigroup as Sem
 import qualified Data.Traversable as T
+import Control.Applicative.Backwards
 
 import Data.Vector.Persistent.Array ( Array )
 import qualified Data.Vector.Persistent.Array as A
@@ -236,7 +237,7 @@ pvTraverse f = go
   where
     go (RootNode sz sh t as)
       | sz == 0 = Ap.pure empty
-      | otherwise = Ap.liftA2 (RootNode sz sh) (T.traverse f t) (A.traverseArray go_ as)
+      | otherwise = Ap.liftA2 (\as' t' -> RootNode sz sh t' as') (A.traverseArray go_ as) (forwards $ T.traverse (Backwards . f) t)
     go_ (DataNode a) = DataNode Ap.<$> A.traverseArray f a
     go_ (InternalNode as) = InternalNode Ap.<$> A.traverseArray go_ as
 
