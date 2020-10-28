@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 module Main ( main ) where
 
 import Test.Framework ( defaultMain, Test )
@@ -5,7 +6,9 @@ import Test.Framework.Providers.QuickCheck2 ( testProperty )
 import Test.QuickCheck
 
 import qualified Data.Foldable as F
+#if !MIN_VERSION_base(4,9,0)
 import Data.Monoid
+#endif
 import qualified Data.List as L
 import qualified Control.Applicative as Ap
 import qualified Data.Traversable as T
@@ -46,6 +49,17 @@ tests = [ testProperty "toListFromListIdent" prop_toListFromListIdentity
         , testProperty "mappendWorks" prop_mappendWorks
         , testProperty "eqWorksEqual" prop_eqWorks_equal
         , testProperty "eqWorks" prop_eqWorks
+        , testProperty "shrink" prop_shrinkPreserves
+        , testProperty "shrinkEq" prop_shrinkEquality
+        , testProperty "appendAfterSlice" prop_appendAfterSlice
+        , testProperty "takeWhile" prop_takeWhile
+        , testProperty "dropWhile" prop_dropWhile
+        , testProperty "take" prop_take
+        , testProperty "drop" prop_drop
+        , testProperty "splitAt" prop_splitAt
+        , testProperty "slice" prop_slice
+        , testProperty "slicedFoldl'" prop_slicedFoldl'
+        , testProperty "slicedFoldr" prop_sliceFoldr
         ]
 
 main :: IO ()
@@ -104,3 +118,76 @@ prop_traverseWorks (InputList il) =
   fmap F.toList (T.traverse go (V.fromList il)) == T.traverse go il
   where
     go a = ([a], a)
+
+prop_take :: SizedList -> Bool
+prop_take (SizedList il ix) =
+  L.take ix il == F.toList (V.take ix (V.fromList il))
+
+prop_drop :: SizedList -> Bool
+prop_drop (SizedList il ix) =
+  L.drop ix il == F.toList (V.drop ix (V.fromList il))
+
+prop_splitAt :: SizedList -> Bool
+prop_splitAt (SizedList il ix) =
+  let (v1, v2) = V.splitAt ix (V.fromList il)
+  in L.splitAt ix il == (F.toList v1, F.toList v2)
+
+listSlice :: Int -> Int -> [a] -> [a]
+listSlice s n = L.take n . (L.drop s)
+
+data SliceList = SliceList [Int] !Int !Int
+               deriving (Show)
+
+instance Arbitrary SliceList where
+  arbitrary = sized sliceList
+
+sliceList :: Int -> Gen SliceList
+sliceList sz = do
+  modifier <- choose (0, 100)
+  l <- vector (1 + (sz * modifier))
+  start <- choose (0, length l - 1)
+  len <- choose (0, 100)
+  return $ SliceList l start len
+
+prop_slice :: SliceList -> Bool
+prop_slice (SliceList il s n) =
+  listSlice s n il == F.toList (V.slice s n (V.fromList il))
+
+prop_sliceFoldr :: SliceList -> Bool
+prop_sliceFoldr (SliceList il s n) =
+  L.foldr (:) [] (listSlice s n il) == V.foldr (:) [] (V.slice s n (V.fromList il))
+
+prop_slicedFoldl' :: SliceList -> Bool
+prop_slicedFoldl' (SliceList il s n) =
+  L.foldl' (flip (:)) [] (listSlice s n il) == V.foldl' (flip (:)) [] (V.slice s n (V.fromList il))
+
+prop_shrinkPreserves :: SliceList -> Bool
+prop_shrinkPreserves (SliceList il s n) =
+  F.toList v0 == F.toList (V.shrink v0)
+  where
+    v0 = V.slice s n (V.fromList il)
+
+prop_shrinkEquality :: SliceList -> Bool
+prop_shrinkEquality (SliceList il s n) =
+  v0 == V.shrink v0
+  where
+    v0 = V.slice s n (V.fromList il)
+
+prop_appendAfterSlice :: (SliceList, Int) -> Property
+prop_appendAfterSlice (SliceList il s n, elt) =
+  n - s < L.length il ==> Just elt == V.index v1 (V.length v1 - 1)
+  where
+    v0 = V.slice s n (V.fromList il)
+    v1 = V.snoc v0 elt
+
+prop_takeWhile :: SizedList -> Bool
+prop_takeWhile (SizedList il ix) =
+  L.takeWhile (<ix) il == F.toList v
+  where
+    v = V.takeWhile (<ix) $ V.fromList il
+
+prop_dropWhile :: SizedList -> Bool
+prop_dropWhile (SizedList il ix) =
+  L.dropWhile (<ix) il == F.toList v
+  where
+    v = V.dropWhile (<ix) $ V.fromList il

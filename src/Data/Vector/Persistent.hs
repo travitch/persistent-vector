@@ -30,6 +30,12 @@ module Data.Vector.Persistent (
   unsafeIndex,
   unsafeIndexA,
   unsafeIndex#,
+  take,
+  drop,
+  splitAt,
+  slice,
+  -- ** Slicing Storage Management
+  shrink,
   -- * Modification
   update,
   (//),
@@ -42,6 +48,8 @@ module Data.Vector.Persistent (
   map,
   reverse,
   -- * Searches
+  takeWhile,
+  dropWhile,
   filter,
   partition
   ) where
@@ -49,7 +57,8 @@ module Data.Vector.Persistent (
 import Prelude hiding
   ( null, length, tail, take
   , drop, map, foldr, foldl
-  , reverse, splitAt, filter )
+  , reverse, splitAt, filter
+  , takeWhile, dropWhile )
 
 import qualified Control.Applicative as Ap
 import Control.DeepSeq
@@ -527,3 +536,38 @@ data TwoVec a = TwoVec {-# UNPACK #-} !(Vector a) {-# UNPACK #-} !(Vector a)
 -- | \( O(n) \) Construct a vector from a list. (O(n))
 fromList :: [a] -> Vector a
 fromList = F.foldl' snoc empty
+
+-- | O(n) Take @n@ elements starting from the start of the 'Vector'
+take :: Int -> Vector a -> Vector a
+take n v = fromList (L.take n (F.toList v))
+
+-- | O(n) Drop @n@ elements starting from the start of the 'Vector'
+drop :: Int -> Vector a -> Vector a
+drop n v = fromList (L.drop n (F.toList v))
+
+-- | O(n) Split the vector into two at the given index
+splitAt :: Int -> Vector a -> (Vector a, Vector a)
+splitAt idx v = (take idx v, drop idx v)
+
+-- | O(n) Return a slice of @v@ of length @length@ starting at index
+-- @start@.  The returned vector may have fewer than @length@ elements
+-- if the bounds are off on either side (the start is negative or
+-- length takes it past the end).
+--
+-- A slice of negative or zero length is the empty vector.
+--
+-- > slice start length v
+slice :: Int -> Int -> Vector a -> Vector a
+slice start len v = fromList (L.take len (L.drop start (F.toList v)))
+
+-- | O(1) Drop any unused space in the vector
+--
+-- NOTE: This is currently the identity
+shrink :: Vector a -> Vector a
+shrink = id
+
+takeWhile :: (a -> Bool) -> Vector a -> Vector a
+takeWhile p = fromList . L.takeWhile p . F.toList
+
+dropWhile :: (a -> Bool) -> Vector a -> Vector a
+dropWhile p = fromList . L.dropWhile p . F.toList
