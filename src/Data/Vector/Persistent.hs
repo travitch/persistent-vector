@@ -533,23 +533,23 @@ partition p v0 = case F.foldl' go (TwoVec empty empty) v0 of
 
 data TwoVec a = TwoVec {-# UNPACK #-} !(Vector a) {-# UNPACK #-} !(Vector a)
 
--- | \( O(n) \) Construct a vector from a list. (O(n))
+-- | \( O(n) \) Construct a vector from a list
 fromList :: [a] -> Vector a
 fromList = F.foldl' snoc empty
 
--- | O(n) Take @n@ elements starting from the start of the 'Vector'
+-- | \( O(n) \) Take @n@ elements starting from the start of the 'Vector'
 take :: Int -> Vector a -> Vector a
 take n v = fromList (L.take n (F.toList v))
 
--- | O(n) Drop @n@ elements starting from the start of the 'Vector'
+-- | \( O(n) \) Drop @n@ elements starting from the start of the 'Vector'
 drop :: Int -> Vector a -> Vector a
 drop n v = fromList (L.drop n (F.toList v))
 
--- | O(n) Split the vector into two at the given index
+-- | \( O(n) \) Split the vector into two at the given index
 splitAt :: Int -> Vector a -> (Vector a, Vector a)
 splitAt idx v = (take idx v, drop idx v)
 
--- | O(n) Return a slice of @v@ of length @length@ starting at index
+-- | \( O(n) \) Return a slice of @v@ of length @length@ starting at index
 -- @start@.  The returned vector may have fewer than @length@ elements
 -- if the bounds are off on either side (the start is negative or
 -- length takes it past the end).
@@ -560,14 +560,16 @@ splitAt idx v = (take idx v, drop idx v)
 slice :: Int -> Int -> Vector a -> Vector a
 slice start len v = fromList (L.take len (L.drop start (F.toList v)))
 
--- | O(1) Drop any unused space in the vector
+-- | \( O(1) \) Drop any unused space in the vector
 --
 -- NOTE: This is currently the identity
 shrink :: Vector a -> Vector a
 shrink = id
 
+-- | \( O(n) \) Apply a predicate p to the vector, returning the longest prefix of elements that satisfy p.
 takeWhile :: (a -> Bool) -> Vector a -> Vector a
 takeWhile p = fromList . L.takeWhile p . F.toList
 
+-- | \( O(n) \) Returns the longest suffix after takeWhile p v.
 dropWhile :: (a -> Bool) -> Vector a -> Vector a
 dropWhile p = fromList . L.dropWhile p . F.toList
