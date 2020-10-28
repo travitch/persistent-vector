@@ -250,6 +250,11 @@ pvTraverse f = go
     go_ (DataNode a) = DataNode Ap.<$> A.traverseArray f a
     go_ (InternalNode as) = InternalNode Ap.<$> A.traverseArray go_ as
 
+-- | \( O(m) \) Append two 'Vector' instances
+--
+-- > append v1 v2
+--
+-- This operation is linear in the length of @v2@ (where @length v1 == n@ and @length v2 == m@).
 append :: Vector a -> Vector a -> Vector a
 append v1 v2
   | null v1 = v2
