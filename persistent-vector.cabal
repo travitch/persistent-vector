@@ -59,7 +59,7 @@ test-suite pvTests
   build-depends: persistent-vector,
                  base == 4.*,
                  QuickCheck > 2.4,
-                 test-framework,
+                 test-framework >= 0.6 && < 0.9,
                  test-framework-quickcheck2
 
 benchmark pvBench
