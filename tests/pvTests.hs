@@ -6,9 +6,7 @@ import Test.Framework.Providers.QuickCheck2 ( testProperty )
 import Test.QuickCheck
 
 import qualified Data.Foldable as F
-#if !MIN_VERSION_base(4,9,0)
-import Data.Monoid
-#endif
+import qualified Data.Monoid as DM
 import qualified Data.List as L
 import qualified Control.Applicative as Ap
 import qualified Data.Traversable as T
@@ -103,7 +101,7 @@ prop_indexingWorks (SizedList il sz) =
 
 prop_mappendWorks :: (InputList, InputList) -> Bool
 prop_mappendWorks (InputList il1, InputList il2) =
-  (il1 `mappend` il2) == F.toList (V.fromList il1 <> V.fromList il2)
+  (il1 `DM.mappend` il2) == F.toList (V.fromList il1 `DM.mappend` V.fromList il2)
 
 prop_eqWorks_equal :: InputList -> Bool
 prop_eqWorks_equal (InputList il) =
