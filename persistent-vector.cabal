@@ -11,7 +11,7 @@ cabal-version: >=1.10
 extra-source-files: README.md
 homepage: https://github.com/travitch/persistent-vector
 bug-reports: https://github.com/travitch/persistent-vector/issues
-tested-with: GHC == 7.4.2, GHC == 7.6.3, GHC == 7.8.4, GHC == 7.10.2, GHC == 8.0.2, GHC == 8.2.2, GHC == 8.4.4, GHC == 8.6.2
+tested-with: GHC == 7.10.2, GHC == 8.0.2, GHC == 8.2.2, GHC == 8.4.4, GHC == 8.6.5, GHC == 8.8.4, GHC == 8.10.2
 
 description:
   This package provides persistent vectors based on array mapped
