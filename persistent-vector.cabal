@@ -1,5 +1,5 @@
 name: persistent-vector
-version: 0.1.2
+version: 0.2.0
 synopsis: A persistent sequence based on array mapped tries
 license: BSD3
 license-file: LICENSE
