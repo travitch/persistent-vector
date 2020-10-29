@@ -552,7 +552,11 @@ drop n v = fromList (L.drop n (F.toList v))
 
 -- | \( O(n) \) Split the vector into two at the given index
 splitAt :: Int -> Vector a -> (Vector a, Vector a)
-splitAt idx v = (take idx v, drop idx v)
+splitAt idx v
+  | (front_list, rear_list) <- L.splitAt idx (F.toList v)
+  , !front <- fromList front_list
+  , !rear <- fromList rear_list
+  = (front, rear)
 
 -- | \( O(n) \) Return a slice of @v@ of length @length@ starting at index
 -- @start@.  The returned vector may have fewer than @length@ elements
