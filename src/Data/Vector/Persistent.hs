@@ -551,6 +551,9 @@ drop :: Int -> Vector a -> Vector a
 drop n v = fromList (L.drop n (F.toList v))
 
 -- | \( O(n) \) Split the vector into two at the given index
+--
+-- Note that this function strictly computes both result vectors (once the tuple
+-- itself is reduced to whnf)
 splitAt :: Int -> Vector a -> (Vector a, Vector a)
 splitAt idx v
   | (front_list, rear_list) <- L.splitAt idx (F.toList v)
