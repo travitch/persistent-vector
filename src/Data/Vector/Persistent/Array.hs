@@ -70,7 +70,10 @@ import Control.Monad.ST
 import qualified GHC.Exts as Ext
 import GHC.ST (ST(..))
 import Prelude hiding (filter, foldl, foldr, length, map, read)
-import qualified Prelude as P
+import qualified Data.Foldable as F
+#if !MIN_VERSION_base(4,8,0)
+import Data.Monoid (mappend)
+#endif
 
 ------------------------------------------------------------------------
 
@@ -108,23 +111,15 @@ instance Eq a => Eq (Array a) where
 instance Ord a => Ord (Array a) where
   compare = arrayCompare
 
-arrayEq :: (Eq a) => Array a -> Array a -> Bool
-arrayEq a1 a2
-  | length a1 /= length a2 = False
-  | otherwise = P.foldr (\i a -> a && index a1 i == index a2 i) True [0..(length a1 - 1)]
+arrayEq :: Eq a => Array a -> Array a -> Bool
+{-# INLINABLE arrayEq #-}
+arrayEq a1 a2 = length a1 == length a2 &&
+  F.all (\i -> index a1 i == index a2 i) [0..(length a1 - 1)]
 
-arrayCompare :: (Ord a) => Array a -> Array a -> Ordering
-arrayCompare a1 a2
-  | length a1 < length a2 = LT
-  | length a1 > length a2 = GT
-  | otherwise = go EQ (length a1)
-  where
-    go GT _ = GT
-    go LT _ = LT
-    go EQ ix =
-      case ix < 0 of
-        True -> EQ
-        False -> go (compare (index a1 ix) (index a2 ix)) (ix - 1)
+arrayCompare :: Ord a => Array a -> Array a -> Ordering
+{-# INLINABLE arrayCompare #-}
+arrayCompare a1 a2 = compare (length a1) (length a2) `mappend`
+  F.foldMap (\i -> index a1 i `compare` index a2 i) [0..(length a1 - 1)]
 
 #if __GLASGOW_HASKELL__ >= 702
 length :: Array a -> Int
