@@ -11,7 +11,7 @@ cabal-version: >=1.10
 extra-source-files: README.md, ChangeLog.md
 homepage: https://github.com/travitch/persistent-vector
 bug-reports: https://github.com/travitch/persistent-vector/issues
-tested-with: GHC == 7.10.2, GHC == 8.0.2, GHC == 8.2.2, GHC == 8.4.4, GHC == 8.6.5, GHC == 8.8.4, GHC == 8.10.2
+tested-with: GHC ==7.10.3 || ==8.0.2 || ==8.2.2 || ==8.4.4 || ==8.6.5 || ==8.8.4 || ==8.10.7 || ==9.0.2 || ==9.2.2
 
 description:
   This package provides persistent vectors based on array mapped
@@ -42,7 +42,7 @@ library
   other-modules: Data.Vector.Persistent.Array
   build-depends: base ==4.*,
                  deepseq >= 1 && < 1.5,
-                 transformers >= 0.3 && < 0.6
+                 transformers >= 0.3 && < 0.7
   if !impl(ghc >= 8.0)
     build-depends: semigroups == 0.18.*
   hs-source-dirs: src
